@@ -7,6 +7,7 @@ fn main() {
     println!("cargo:rerun-if-changed=curl");
     println!(
         "cargo:rustc-check-cfg=cfg(\
+            link_brotli,\
             libcurl_vendored,\
             link_libnghttp2,\
             link_libz,\
@@ -290,6 +291,12 @@ fn main() {
             let path = PathBuf::from(path);
             cfg.include(path.join("include"));
         }
+    }
+
+    if cfg!(feature = "brotli") {
+        cfg.define("HAVE_BROTLI", None)
+            .include(find_brotli_include());
+        println!("cargo:rustc-cfg=link_brotli");
     }
 
     println!("cargo:rustc-cfg=link_libz");
@@ -585,4 +592,77 @@ fn curl_config_reports_http2() -> bool {
     }
 
     true
+}
+
+fn find_brotli_include() -> PathBuf {
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let workspace_root = manifest_dir.parent().unwrap().to_path_buf();
+
+    let mut roots = vec![workspace_root.join("vendor"), manifest_dir.join("vendor")];
+
+    if let Some(cargo_home) = cargo_home() {
+        roots.push(cargo_home.join("registry").join("src"));
+        roots.push(cargo_home.join("git").join("checkouts"));
+    }
+
+    for root in roots {
+        if let Some(path) = brotli_include_in(&root) {
+            return path;
+        }
+    }
+
+    panic!(
+        "failed to locate brotlic-sys headers; searched workspace vendor/ and cargo registry sources"
+    );
+}
+
+fn cargo_home() -> Option<PathBuf> {
+    env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))
+}
+
+fn brotli_include_in(root: &Path) -> Option<PathBuf> {
+    fn candidate(dir: &Path) -> Option<PathBuf> {
+        let include = dir.join("brotli").join("c").join("include");
+        if dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("brotlic-sys-"))
+            && include.join("brotli").join("decode.h").exists()
+        {
+            Some(include)
+        } else {
+            None
+        }
+    }
+
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        if let Some(include) = candidate(&path) {
+            return Some(include);
+        }
+
+        let children = match fs::read_dir(&path) {
+            Ok(children) => children,
+            Err(_) => continue,
+        };
+        for child in children.flatten() {
+            let child_path = child.path();
+            if !child_path.is_dir() {
+                continue;
+            }
+
+            if let Some(include) = candidate(&child_path) {
+                return Some(include);
+            }
+        }
+    }
+
+    None
 }

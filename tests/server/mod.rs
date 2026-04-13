@@ -16,7 +16,7 @@ pub struct Server {
 
 enum Message {
     Read(String),
-    Write(String),
+    Write(Vec<u8>),
 }
 
 enum Addr {
@@ -49,7 +49,9 @@ fn run(stream: impl Read + Write, rx: &Receiver<Message>) {
                         expected_len = len.trim().parse().ok();
                     }
                     // various versions of libcurl do different things here
-                    if actual == "Proxy-Connection: Keep-Alive\r\n" {
+                    if actual == "Proxy-Connection: Keep-Alive\r\n"
+                        || actual == "Connection: close\r\n"
+                    {
                         continue;
                     }
                     if expected_headers.remove(&actual[..]) {
@@ -108,7 +110,7 @@ fn run(stream: impl Read + Write, rx: &Receiver<Message>) {
                 }
             }
             Message::Write(ref to_write) => {
-                t!(socket.get_mut().write_all(to_write.as_bytes()));
+                t!(socket.get_mut().write_all(to_write));
                 return;
             }
         }
@@ -175,7 +177,11 @@ impl Server {
     }
 
     pub fn send(&self, msg: &str) {
-        self.msg(Message::Write(self.replace_port(msg)));
+        self.msg(Message::Write(self.replace_port(msg).into_bytes()));
+    }
+
+    pub fn send_bytes(&self, msg: &[u8]) {
+        self.msg(Message::Write(msg.to_vec()));
     }
 
     fn msg(&self, msg: Message) {

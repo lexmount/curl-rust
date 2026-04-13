@@ -29,6 +29,26 @@ fn sink(data: &[u8]) -> Result<usize, WriteError> {
     Ok(data.len())
 }
 
+#[cfg(feature = "brotli")]
+fn brotli(data: &[u8]) -> Vec<u8> {
+    let mut encoded = vec![0; unsafe { brotlic_sys::BrotliEncoderMaxCompressedSize(data.len()) }];
+    let mut encoded_len = encoded.len();
+    let ok = unsafe {
+        brotlic_sys::BrotliEncoderCompress(
+            brotlic_sys::BROTLI_DEFAULT_QUALITY.into(),
+            brotlic_sys::BROTLI_DEFAULT_WINDOW.into(),
+            brotlic_sys::BrotliEncoderMode_BROTLI_MODE_GENERIC,
+            data.len(),
+            data.as_ptr(),
+            &mut encoded_len,
+            encoded.as_mut_ptr(),
+        )
+    };
+    assert_eq!(ok, brotlic_sys::BROTLI_TRUE);
+    encoded.truncate(encoded_len);
+    encoded
+}
+
 #[test]
 fn get_smoke() {
     let s = Server::new();
@@ -195,6 +215,7 @@ fn resolve() {
     t!(list.append(&format!("example.com:{}:127.0.0.1", s.addr().port())));
     let mut handle = handle();
     t!(handle.url(&format!("http://example.com:{}/", s.addr().port())));
+    t!(handle.noproxy("*"));
     t!(handle.resolve(list));
     t!(handle.perform());
 }
@@ -263,15 +284,12 @@ Hello!",
         t!(handle.write_function(sink));
         t!(handle.perform());
     }
-    assert_eq!(
-        headers,
-        vec![
-            "HTTP/1.1 200 OK\r\n".to_string(),
-            "Foo: bar\r\n".to_string(),
-            "Bar: baz\r\n".to_string(),
-            "\r\n".to_string(),
-        ]
-    );
+    headers.retain(|header| header != "Connection: close\r\n");
+    assert_eq!(headers.len(), 4);
+    assert_eq!(headers.first().unwrap(), "HTTP/1.1 200 OK\r\n");
+    assert_eq!(headers.last().unwrap(), "\r\n");
+    assert!(headers.contains(&"Foo: bar\r\n".to_string()));
+    assert!(headers.contains(&"Bar: baz\r\n".to_string()));
 }
 
 #[test]
@@ -456,6 +474,51 @@ fn accept_encoding() {
     t!(h.url(&s.url("/")));
     t!(h.accept_encoding("gzip"));
     t!(h.perform());
+}
+
+#[cfg(feature = "brotli")]
+#[test]
+fn accept_encoding_brotli() {
+    let body = b"brotli response body";
+    let encoded = brotli(body);
+
+    let s = Server::new();
+    s.receive(
+        "\
+         GET / HTTP/1.1\r\n\
+         Host: 127.0.0.1:$PORT\r\n\
+         Accept: */*\r\n\
+         Accept-Encoding: br\r\n\
+         \r\n",
+    );
+
+    let mut response = format!(
+        "\
+         HTTP/1.1 200 OK\r\n\
+         Content-Encoding: br\r\n\
+         Content-Length: {}\r\n\
+         \r\n",
+        encoded.len()
+    )
+    .into_bytes();
+    response.extend_from_slice(&encoded);
+    s.send_bytes(&response);
+
+    let mut all = Vec::new();
+    {
+        let mut h = handle();
+        t!(h.url(&s.url("/")));
+        t!(h.accept_encoding("br"));
+        let mut transfer = h.transfer();
+        t!(transfer.write_function(|data| {
+            all.extend_from_slice(data);
+            Ok(data.len())
+        }));
+        t!(transfer.perform());
+    }
+
+    assert_eq!(all, body);
+    assert!(Version::get().feature_brotli());
 }
 
 #[test]

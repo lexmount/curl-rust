@@ -30,6 +30,7 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 mio = "0.6"
 mio-extras = "2.0.3"
 anyhow = "1.0.31"
+brotlic-sys = "0.2.2"
 
 [workspace]
 members = ["systest"]
@@ -38,6 +39,7 @@ members = ["systest"]
 default = ["ssl"]
 ssl = ["openssl-sys", "openssl-probe", "curl-sys/ssl"] # OpenSSL/system TLS backend
 mesalink = ["curl-sys/mesalink"] # MesaLink TLS backend
+brotli = ["curl-sys/brotli"]
 http2 = ["curl-sys/http2"]
 spnego = ["curl-sys/spnego"]
 rustls = ["curl-sys/rustls"]
