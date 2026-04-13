@@ -24,6 +24,7 @@ path = "lib.rs"
 libz-sys = { version = "1.0.18", default-features = false, features = ["libc"] }
 libc = "0.2.2"
 libnghttp2-sys = { optional = true, version = "0.1.3" }
+brotlic-sys = { optional = true, version = "0.2.2" }
 
 [dependencies.rustls-ffi]
 version = "0.15"
@@ -47,6 +48,7 @@ pkg-config = "0.3.3"
 default = ["ssl"]
 ssl = ["openssl-sys"]
 http2 = ["libnghttp2-sys"]
+brotli = ["brotlic-sys"]
 mesalink = []
 rustls = ["rustls-ffi"]
 static-curl = []

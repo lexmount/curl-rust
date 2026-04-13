@@ -1425,8 +1425,8 @@ impl<H> Easy2<H> {
     /// Sets the contents of the Accept-Encoding header sent in an HTTP request.
     /// This enables decoding of a response with Content-Encoding.
     ///
-    /// Currently supported encoding are `identity`, `zlib`, and `gzip`. A
-    /// zero-length string passed in will send all accepted encodings.
+    /// Currently supported encoding are `identity`, `deflate`, `gzip`, and
+    /// `br`. A zero-length string passed in will send all accepted encodings.
     ///
     /// By default this option is not set and corresponds to
     /// `CURLOPT_ACCEPT_ENCODING`.
