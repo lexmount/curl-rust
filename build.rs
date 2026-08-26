@@ -17,7 +17,9 @@ fn main() {
             }
             true
         }
-        Err(_) => false,
+        // openssl-sys exposes AWS-LC through the OpenSSL-compatible API, but
+        // reports the backend through metadata instead of a version number.
+        Err(_) => env::var_os("DEP_OPENSSL_AWSLC").is_some(),
     };
 
     if use_openssl {
