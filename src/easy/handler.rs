@@ -384,6 +384,7 @@ pub struct Easy2<H> {
 struct Inner<H> {
     handle: *mut curl_sys::CURL,
     header_list: Option<List>,
+    proxy_header_list: Option<List>,
     resolve_list: Option<List>,
     connect_to_list: Option<List>,
     form: Option<Form>,
@@ -594,6 +595,7 @@ impl<H: Handler> Easy2<H> {
                 inner: Box::new(Inner {
                     handle,
                     header_list: None,
+                    proxy_header_list: None,
                     resolve_list: None,
                     connect_to_list: None,
                     form: None,
@@ -1595,15 +1597,35 @@ impl<H> Easy2<H> {
         self.setopt_ptr(curl_sys::CURLOPT_HTTPHEADER, ptr as *const _)
     }
 
-    // /// Add some headers to send to the HTTP proxy.
-    // ///
-    // /// This function is essentially the same as `http_headers`.
-    // ///
-    // /// By default this option is not set and corresponds to
-    // /// `CURLOPT_PROXYHEADER`
-    // pub fn proxy_headers(&mut self, list: &'a List) -> Result<(), Error> {
-    //     self.setopt_ptr(curl_sys::CURLOPT_PROXYHEADER, list.raw as *const _)
-    // }
+    /// Sets custom headers for HTTP proxy requests.
+    ///
+    /// This handle owns the list for as long as libcurl may use it. Calling this
+    /// again replaces the previous list; an empty list clears it. Header syntax
+    /// follows [`Easy2::http_headers`].
+    ///
+    /// Use [`Easy2::separate_proxy_headers`] with `true` to send this list in
+    /// CONNECT requests and the ordinary HTTP headers only inside the tunnel.
+    /// Without a CONNECT tunnel, both lists are sent in the request to the proxy.
+    ///
+    /// This corresponds to `CURLOPT_PROXYHEADER`, available since libcurl 7.37.0.
+    pub fn proxy_headers(&mut self, list: List) -> Result<(), Error> {
+        self.setopt_ptr(curl_sys::CURLOPT_PROXYHEADER, list::raw(&list) as *const _)?;
+        self.inner.proxy_header_list = Some(list);
+        Ok(())
+    }
+
+    /// Controls whether proxy requests use their own custom header list.
+    ///
+    /// With `true`, CONNECT requests use [`Easy2::proxy_headers`] and requests
+    /// inside the tunnel use [`Easy2::http_headers`]. With `false`, both requests
+    /// use the ordinary HTTP headers and the proxy header list is ignored.
+    /// For a non-CONNECT proxy request, separate mode sends both lists.
+    ///
+    /// This corresponds to `CURLOPT_HEADEROPT`, available since libcurl 7.37.0.
+    /// Separate mode is the libcurl default since 7.42.1.
+    pub fn separate_proxy_headers(&mut self, separate: bool) -> Result<(), Error> {
+        self.setopt_long(curl_sys::CURLOPT_HEADEROPT, separate as c_long)
+    }
 
     /// Set the contents of the HTTP Cookie header.
     ///

@@ -277,6 +277,12 @@ fn main() {
                 return true;
             }
         }
+        if version < (7, 37) {
+            match s {
+                "CURLOPT_PROXYHEADER" | "CURLOPT_HEADEROPT" => return true,
+                _ => {}
+            }
+        }
         if version < (7, 25) {
             match s {
                 "CURLSSLOPT_ALLOW_BEAST" => return true,
