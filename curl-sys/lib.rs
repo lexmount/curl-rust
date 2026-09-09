@@ -636,6 +636,29 @@ pub const CURLOPT_DOH_SSL_VERIFYSTATUS: CURLoption = CURLOPTTYPE_LONG + 308;
 pub const CURLOPT_CAINFO_BLOB: CURLoption = CURLOPTTYPE_BLOB + 309;
 pub const CURLOPT_PROXY_CAINFO_BLOB: CURLoption = CURLOPTTYPE_BLOB + 310;
 
+pub const CURLOPT_WS_OPTIONS: CURLoption = CURLOPTTYPE_LONG + 320;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct curl_ws_frame {
+    pub age: c_int,
+    pub flags: c_int,
+    pub offset: curl_off_t,
+    pub bytesleft: curl_off_t,
+    pub len: size_t,
+}
+
+pub const CURLWS_TEXT: c_int = 1 << 0;
+pub const CURLWS_BINARY: c_int = 1 << 1;
+pub const CURLWS_CONT: c_int = 1 << 2;
+pub const CURLWS_CLOSE: c_int = 1 << 3;
+pub const CURLWS_PING: c_int = 1 << 4;
+pub const CURLWS_OFFSET: c_int = 1 << 5;
+pub const CURLWS_PONG: c_int = 1 << 6;
+
+pub const CURLWS_RAW_MODE: c_long = 1 << 0;
+pub const CURLWS_NOAUTOPONG: c_long = 1 << 1;
+
 pub const CURL_IPRESOLVE_WHATEVER: c_int = 0;
 pub const CURL_IPRESOLVE_V4: c_int = 1;
 pub const CURL_IPRESOLVE_V6: c_int = 2;
@@ -768,6 +791,7 @@ pub const CURLINFO_STRING: CURLINFO = 0x100000;
 pub const CURLINFO_LONG: CURLINFO = 0x200000;
 pub const CURLINFO_DOUBLE: CURLINFO = 0x300000;
 pub const CURLINFO_SLIST: CURLINFO = 0x400000;
+pub const CURLINFO_SOCKET: CURLINFO = 0x500000;
 pub const CURLINFO_MASK: CURLINFO = 0x0fffff;
 pub const CURLINFO_TYPEMASK: CURLINFO = 0xf00000;
 
@@ -813,6 +837,7 @@ pub const CURLINFO_RTSP_CSEQ_RECV: CURLINFO = CURLINFO_LONG + 39;
 pub const CURLINFO_PRIMARY_PORT: CURLINFO = CURLINFO_LONG + 40;
 pub const CURLINFO_LOCAL_IP: CURLINFO = CURLINFO_STRING + 41;
 pub const CURLINFO_LOCAL_PORT: CURLINFO = CURLINFO_LONG + 42;
+pub const CURLINFO_ACTIVESOCKET: CURLINFO = CURLINFO_SOCKET + 44;
 // pub const CURLINFO_TLS_SESSION: CURLINFO = CURLINFO_SLIST + 43;
 
 pub type curl_closepolicy = __enum_ty;
@@ -1105,6 +1130,28 @@ extern "C" {
         buflen: size_t,
         n: *mut size_t,
     ) -> CURLcode;
+
+    #[cfg(feature = "websocket")]
+    pub fn curl_ws_recv(
+        curl: *mut CURL,
+        buffer: *mut c_void,
+        buflen: size_t,
+        recv: *mut size_t,
+        meta: *mut *const curl_ws_frame,
+    ) -> CURLcode;
+    #[cfg(feature = "websocket")]
+    pub fn curl_ws_send(
+        curl: *mut CURL,
+        buffer: *const c_void,
+        buflen: size_t,
+        sent: *mut size_t,
+        fragsize: curl_off_t,
+        flags: c_uint,
+    ) -> CURLcode;
+    #[cfg(feature = "websocket")]
+    pub fn curl_ws_meta(curl: *mut CURL) -> *const curl_ws_frame;
+    #[cfg(feature = "ws_start_frame_8_16_0")]
+    pub fn curl_ws_start_frame(curl: *mut CURL, flags: c_uint, frame_len: curl_off_t) -> CURLcode;
 
     #[cfg(feature = "upkeep_7_62_0")]
     pub fn curl_easy_upkeep(curl: *mut CURL) -> CURLcode;

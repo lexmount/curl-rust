@@ -13,6 +13,8 @@ use crate::easy::handler::{Auth, NetRc, PostRedirections, ProxyType, SslOpt};
 use crate::easy::handler::{HttpVersion, IpResolve, SslVersion, TimeCondition};
 use crate::easy::{Easy2, Handler};
 use crate::easy::{Form, List};
+#[cfg(feature = "websocket")]
+use crate::easy::{WsFlags, WsFrame, WsOptions};
 use crate::Error;
 
 /// Raw bindings to a libcurl "easy session".
@@ -1012,6 +1014,18 @@ impl Easy {
         self.inner.connect_only(enable)
     }
 
+    /// Same as [`Easy2::ws_connect_only`](struct.Easy2.html#method.ws_connect_only).
+    #[cfg(feature = "websocket")]
+    pub fn ws_connect_only(&mut self, enable: bool) -> Result<(), Error> {
+        self.inner.ws_connect_only(enable)
+    }
+
+    /// Same as [`Easy2::ws_options`](struct.Easy2.html#method.ws_options).
+    #[cfg(feature = "websocket")]
+    pub fn ws_options(&mut self, options: &WsOptions) -> Result<(), Error> {
+        self.inner.ws_options(options)
+    }
+
     // =========================================================================
     // SSL/Security Options
 
@@ -1463,6 +1477,40 @@ impl Easy {
     /// Same as [`Easy2::send`](struct.Easy2.html#method.send)
     pub fn send(&mut self, data: &[u8]) -> Result<usize, Error> {
         self.inner.send(data)
+    }
+
+    /// Same as [`Easy2::active_socket`](struct.Easy2.html#method.active_socket).
+    pub fn active_socket(&self) -> Result<Option<curl_sys::curl_socket_t>, Error> {
+        self.inner.active_socket()
+    }
+
+    /// Same as [`Easy2::ws_recv`](struct.Easy2.html#method.ws_recv).
+    #[cfg(feature = "websocket")]
+    pub fn ws_recv(&mut self, data: &mut [u8]) -> Result<(usize, WsFrame), Error> {
+        self.inner.ws_recv(data)
+    }
+
+    /// Same as [`Easy2::ws_send`](struct.Easy2.html#method.ws_send).
+    #[cfg(feature = "websocket")]
+    pub fn ws_send(
+        &mut self,
+        data: &[u8],
+        frame_size: u64,
+        flags: WsFlags,
+    ) -> Result<usize, Error> {
+        self.inner.ws_send(data, frame_size, flags)
+    }
+
+    /// Same as [`Easy2::ws_meta`](struct.Easy2.html#method.ws_meta).
+    #[cfg(feature = "websocket")]
+    pub fn ws_meta(&self) -> Option<WsFrame> {
+        self.inner.ws_meta()
+    }
+
+    /// Same as [`Easy2::ws_start_frame`](struct.Easy2.html#method.ws_start_frame).
+    #[cfg(feature = "ws_start_frame_8_16_0")]
+    pub fn ws_start_frame(&self, flags: WsFlags, frame_len: u64) -> Result<(), Error> {
+        self.inner.ws_start_frame(flags, frame_len)
     }
 
     /// Same as [`Easy2::raw`](struct.Easy2.html#method.raw)

@@ -1,0 +1,29 @@
+name: WebSocket
+
+on:
+  push:
+    branches: [main, moli]
+  pull_request:
+    branches: [main, moli]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Native WebSocket (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Test HTTP and WebSocket APIs
+        run: cargo test --workspace --features static-curl,http2,brotli,websocket,ws_start_frame_8_16_0
+      - name: Check native ABI
+        run: cargo run -p systest --features curl-sys/static-curl,systest/websocket,systest/ws_start_frame_8_16_0
