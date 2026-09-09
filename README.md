@@ -59,6 +59,12 @@ The separate `ws_start_frame_8_16_0` feature includes `websocket` and adds
 upload read callback; it requires libcurl 8.16.0 or newer. These features are
 opt-in so ordinary HTTP consumers can continue using older system libraries.
 
+With `static-curl,websocket`, this fork also retains connections after accepted
+`HTTP/1.0 101` upgrades. Bundled libcurl otherwise closes them using its HTTP/1.0
+persistence default before the first frame. The build generates a patched
+`ws.c` in `OUT_DIR`; it leaves the upstream submodule untouched and checks the
+patch location when libcurl changes. System library builds do not get this fix.
+
 Local validation (including C structure and function ABI checks):
 
 ```sh

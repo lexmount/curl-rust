@@ -22,6 +22,13 @@ struct Server {
 
 impl Server {
     fn new(run: impl FnOnce(TcpStream) + Send + 'static) -> Self {
+        Self::with_http_version("HTTP/1.1", run)
+    }
+
+    fn with_http_version(
+        version: &'static str,
+        run: impl FnOnce(TcpStream) + Send + 'static,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let thread = thread::spawn(move || {
@@ -45,9 +52,12 @@ impl Server {
             )));
             stream
                 .write_all(
-                    b"HTTP/1.1 101 Switching Protocols\r\n\
+                    format!(
+                        "{version} 101 Switching Protocols\r\n\
                 Upgrade: websocket\r\nConnection: Upgrade\r\n\
-                Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+                Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n"
+                    )
+                    .as_bytes(),
                 )
                 .unwrap();
             run(stream);
@@ -420,6 +430,48 @@ fn multi_handle_retains_connection_until_removed() {
     let mut easy = multi.remove(handle).unwrap();
     assert!(easy.ws_send(b"detached", 0, WsFlags::TEXT).is_err());
     done_tx.send(()).unwrap();
+}
+
+#[test]
+#[cfg(feature = "static-curl")]
+fn http10_upgrade_retains_easy_connection() {
+    let server = Server::with_http_version("HTTP/1.0", |mut stream| {
+        assert_eq!(read_frame(&mut stream), (0x81, b"still open".to_vec()));
+        stream.write_all(&frame(0x81, b"echo")).unwrap();
+        assert_eq!(read_frame(&mut stream), (0x88, Vec::new()));
+        stream.write_all(&frame(0x88, b"")).unwrap();
+    });
+    let mut easy = server.easy();
+    easy.perform().unwrap();
+    send(&mut easy, b"still open", 0, WsFlags::TEXT);
+    let mut buffer = [0; 32];
+    let (len, metadata) = receive(&mut easy, &mut buffer);
+    assert_eq!(metadata.flags(), WsFlags::TEXT);
+    assert_eq!(&buffer[..len], b"echo");
+    send(&mut easy, b"", 0, WsFlags::CLOSE);
+    assert_eq!(receive(&mut easy, &mut buffer).1.flags(), WsFlags::CLOSE);
+}
+
+#[test]
+#[cfg(feature = "static-curl")]
+fn http10_upgrade_retains_multi_easy2_connection() {
+    let server = Server::with_http_version("HTTP/1.0", |mut stream| {
+        assert_eq!(read_frame(&mut stream), (0x82, b"still open".to_vec()));
+        stream.write_all(&frame(0x82, b"echo")).unwrap();
+        assert_eq!(read_frame(&mut stream), (0x88, Vec::new()));
+        stream.write_all(&frame(0x88, b"")).unwrap();
+    });
+    let multi = Multi::new();
+    let mut handle = multi.add2(server.easy2(Empty)).unwrap();
+    finish_handshake(&multi);
+    send(&mut handle, b"still open", 0, WsFlags::BINARY);
+    let mut buffer = [0; 32];
+    let (len, metadata) = receive(&mut handle, &mut buffer);
+    assert_eq!(metadata.flags(), WsFlags::BINARY);
+    assert_eq!(&buffer[..len], b"echo");
+    send(&mut handle, b"", 0, WsFlags::CLOSE);
+    assert_eq!(receive(&mut handle, &mut buffer).1.flags(), WsFlags::CLOSE);
+    drop(multi.remove2(handle).unwrap());
 }
 
 #[test]

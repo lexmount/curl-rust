@@ -298,7 +298,7 @@ fn main() {
         .file("curl/lib/vtls/vtls.c")
         .file("curl/lib/vtls/vtls_config.c")
         .file("curl/lib/vtls/vtls_scache.c")
-        .file("curl/lib/ws.c")
+        .file(websocket_source(&dst))
         .define("HAVE_GETADDRINFO", None)
         .define("HAVE_GETPEERNAME", None)
         .define("HAVE_GETSOCKNAME", None)
@@ -622,6 +622,30 @@ fn try_pkg_config() -> bool {
         println!("cargo:include={}", path.display());
     }
     true
+}
+
+fn websocket_source(dst: &Path) -> PathBuf {
+    let source = PathBuf::from("curl/lib/ws.c");
+    if !cfg!(feature = "websocket") {
+        return source;
+    }
+
+    // libcurl accepts an HTTP/1.0 101 response, but its HTTP persistence
+    // default then closes the upgraded connection when CONNECT_ONLY finishes.
+    // Preserve the accepted WebSocket just as for HTTP/1.1. Generate this one
+    // patched translation unit without modifying the pinned upstream submodule
+    // or requiring a patch executable on Windows. Recheck on libcurl updates.
+    let before = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n";
+    let after = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n\n  /* HTTP persistence no longer governs an accepted protocol upgrade. */\n  if(k->httpversion == 10)\n    connkeep(data->conn, \"WebSocket upgrade\");\n";
+    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the HTTP/1.0 WebSocket upgrade patch against bundled libcurl"
+    );
+    let patched = dst.join("ws.c");
+    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
 }
 
 fn curl_config_reports_http2() -> bool {
