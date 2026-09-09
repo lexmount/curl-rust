@@ -313,6 +313,54 @@ fn text_binary_empty_and_close_frames() {
 }
 
 #[test]
+fn receive_does_not_drain_the_socket_into_unbounded_prefetch() {
+    const PAYLOAD_BYTES: usize = 128 * 1024;
+    let wire = frame(0x82, &vec![b'x'; PAYLOAD_BYTES]);
+    let wire_len = wire.len();
+    let (start_tx, start_rx) = mpsc::channel();
+    let server = Server::new(move |mut stream| {
+        start_rx.recv_timeout(TIMEOUT).unwrap();
+        stream.write_all(&wire).unwrap();
+        // Keep the connection open until the client has inspected the socket.
+        let _ = stream.read(&mut [0]);
+    });
+    let mut easy = server.easy();
+    easy.perform().unwrap();
+    // Borrow libcurl's socket without transferring ownership. Delaying the
+    // payload until after the handshake keeps it out of the HTTP read buffer.
+    #[cfg(unix)]
+    let socket = unsafe { std::os::fd::BorrowedFd::borrow_raw(easy.socket()) };
+    #[cfg(windows)]
+    let socket = unsafe { std::os::windows::io::BorrowedSocket::borrow_raw(easy.socket()) };
+    let socket = socket2::SockRef::from(&socket);
+    socket.set_recv_buffer_size(256 * 1024).unwrap();
+    let mut raw = vec![std::mem::MaybeUninit::uninit(); wire_len];
+    let mut available = || match socket.peek(&mut raw) {
+        Ok(count) => count,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => 0,
+        Err(error) => panic!("socket peek failed: {}", error),
+    };
+    start_tx.send(()).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while available() < wire_len {
+        assert!(
+            Instant::now() < deadline,
+            "test payload did not reach socket"
+        );
+        thread::yield_now();
+    }
+    let mut byte = [0];
+    let (count, meta) = easy.ws_recv(&mut byte).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(byte, [b'x']);
+    assert_eq!(meta.bytes_left(), (PAYLOAD_BYTES - 1) as u64);
+    assert!(
+        available() >= PAYLOAD_BYTES / 2,
+        "a one-byte receive must not prefetch all queued network data"
+    );
+}
+
+#[test]
 fn partial_payload_and_fragmented_message_sends() {
     let server = Server::new(|mut stream| {
         assert_eq!(read_frame(&mut stream), (0x81, b"hello world".to_vec()));
