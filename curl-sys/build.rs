@@ -582,11 +582,24 @@ fn websocket_source(dst: &Path) -> PathBuf {
     // or requiring a patch executable on Windows. Recheck on libcurl updates.
     let before = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n";
     let after = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n\n  /* HTTP persistence no longer governs an accepted protocol upgrade. */\n  if(k->httpversion == 10)\n    connkeep(data->conn, \"WebSocket upgrade\");\n";
-    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    let mut contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
     assert_eq!(
         contents.matches(before).count(),
         1,
         "recheck the HTTP/1.0 WebSocket upgrade patch against bundled libcurl"
+    );
+    contents = contents.replacen(before, after, 1);
+
+    // recvbuf has a soft allocation limit. Slurping until the socket blocks
+    // can prefetch an entire stream before returning one payload chunk and
+    // prevent the caller from applying receive backpressure. Read one bounded
+    // buffer chunk instead, then let the WebSocket decoder return to the caller.
+    let before = "Curl_bufq_slurp(&ws->recvbuf, nw_in_recv, data, &n)";
+    let after = "Curl_bufq_sipn(&ws->recvbuf, 0, nw_in_recv, data, &n)";
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the WebSocket receive prefetch patch against bundled libcurl"
     );
     let patched = dst.join("ws.c");
     fs::write(&patched, contents.replacen(before, after, 1)).unwrap();

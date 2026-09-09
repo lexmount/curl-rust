@@ -62,7 +62,10 @@ With `static-curl,websocket`, this fork also retains connections after accepted
 `HTTP/1.0 101` upgrades. Bundled libcurl otherwise closes them using its HTTP/1.0
 persistence default before the first frame. The build generates a patched
 `ws.c` in `OUT_DIR`; it leaves the upstream submodule untouched and checks the
-patch location when libcurl changes. System library builds do not get this fix.
+patch location when libcurl changes. The WebSocket receive path also decodes
+after each bounded socket read, so a small `ws_recv()` does not drain an
+arbitrarily large stream into libcurl's internal receive queue before the caller
+can pause reading. System library builds do not get these fixes.
 
 Local validation (including C structure and function ABI checks):
 
