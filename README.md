@@ -2,11 +2,69 @@
 
 [libcurl] bindings for Rust
 
+Moli's fork is maintained at [lexmount/curl-rust](https://github.com/lexmount/curl-rust)
+on the `moli` branch. Moli-specific changes should be based on that branch.
+
 [![Latest Version](https://img.shields.io/crates/v/curl.svg)](https://crates.io/crates/curl)
 [![Documentation](https://docs.rs/curl/badge.svg)](https://docs.rs/curl)
 [![License](https://img.shields.io/github/license/sagebind/curl-rust.svg)](LICENSE)
-[![Build](https://github.com/sagebind/curl-rust/workflows/CI/badge.svg)](https://github.com/sagebind/curl-rust/actions)
 ![Maintenance](https://img.shields.io/badge/maintenance-passively--maintained-brightgreen.svg)
+[![Build](https://github.com/lexmount/curl-rust/actions/workflows/websocket.yml/badge.svg?branch=moli)](https://github.com/lexmount/curl-rust/actions/workflows/websocket.yml)
+
+## WebSocket clients
+
+Enable the `websocket` feature for native frame I/O. `static-curl` builds the
+bundled libcurl with WebSocket support, avoiding dependence on the system
+library's protocol configuration. To use this fork throughout a workspace:
+
+```toml
+[dependencies]
+curl = { version = "0.4.51", features = ["static-curl", "websocket"] }
+
+[patch.crates-io]
+curl = { git = "https://github.com/lexmount/curl-rust", branch = "moli" }
+curl-sys = { git = "https://github.com/lexmount/curl-rust", branch = "moli" }
+```
+
+`Easy` and `Easy2` provide these methods:
+
+- `ws_connect_only(true)` sets `CURLOPT_CONNECT_ONLY` to **2**, completing the
+  HTTP upgrade before returning control. The existing `connect_only(true)`
+  retains its original meaning (mode 1, connection setup only).
+- `ws_options(&WsOptions)` configures raw callback mode or disables automatic
+  pong replies. Disabling automatic pong requires libcurl 8.14.0 or newer.
+- `ws_send(payload, frame_size, flags)` sends frame payload and returns the
+  number of bytes consumed. Normally `frame_size` is zero; `WsFlags::OFFSET`
+  allows supplying one frame across multiple calls.
+- `ws_recv(buffer)` returns `(bytes_received, WsFrame)`. The metadata is copied,
+  so it remains valid after subsequent calls and after the handle is dropped.
+- `active_socket()` exposes the borrowed socket for readiness polling.
+- `ws_meta()` copies metadata from inside a WebSocket write callback.
+
+`EasyHandle` and `Easy2Handle` also expose frame I/O, metadata, and the active
+socket. When using `Multi`, **keep the easy handle attached after the handshake
+completes**. Removing it invalidates subsequent connection I/O. Retry
+`Error::is_again()` after waiting for socket readiness, and resume short sends
+with only the remaining payload. An empty frame is valid and is not EOF.
+
+This is a low-level frame API: the application assembles fragmented messages,
+handles interleaved control frames and close semantics, validates text UTF-8,
+and applies its handshake/subprotocol/extension policy. Libcurl's successful
+handshake alone does not provide browser-level validation. See
+[libcurl's WebSocket interface](https://curl.se/libcurl/c/libcurl-ws.html).
+
+The base feature requires libcurl 7.86.0 or newer with WebSocket support.
+The separate `ws_start_frame_8_16_0` feature includes `websocket` and adds
+`ws_start_frame(flags, frame_len)` for starting typed or empty frames from an
+upload read callback; it requires libcurl 8.16.0 or newer. These features are
+opt-in so ordinary HTTP consumers can continue using older system libraries.
+
+Local validation (including C structure and function ABI checks):
+
+```sh
+cargo test --workspace --features static-curl,http2,brotli,websocket,ws_start_frame_8_16_0
+cargo run -p systest --features curl-sys/static-curl,systest/websocket,systest/ws_start_frame_8_16_0
+```
 
 ## Quick Start
 

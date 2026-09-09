@@ -11,6 +11,8 @@ mod form;
 mod handle;
 mod handler;
 mod list;
+#[cfg(feature = "websocket")]
+mod websocket;
 mod windows;
 
 pub use self::form::{Form, Part};
@@ -20,3 +22,5 @@ pub use self::handler::{Easy2, Handler};
 pub use self::handler::{HttpVersion, IpResolve, SslVersion, TimeCondition};
 pub use self::handler::{InfoType, ReadError, SeekResult, WriteError};
 pub use self::list::{Iter, List};
+#[cfg(feature = "websocket")]
+pub use self::websocket::{WsFlags, WsFrame, WsOptions};

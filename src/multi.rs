@@ -14,6 +14,8 @@ use libc::{c_char, c_int, c_long, c_short, c_void};
 use libc::{pollfd, POLLIN, POLLOUT, POLLPRI};
 
 use crate::easy::{Easy, Easy2, List};
+#[cfg(feature = "websocket")]
+use crate::easy::{WsFlags, WsFrame};
 use crate::panic;
 use crate::{Error, MultiError};
 
@@ -948,6 +950,7 @@ macro_rules! impl_easy_getters {
                 local_ip -> Option<&str>,
                 local_port -> u16,
                 num_connects -> u64,
+                active_socket -> Option<Socket>,
             }
 
             get_mut {
@@ -992,6 +995,41 @@ macro_rules! impl_easy_getters {
     };
 }
 
+macro_rules! impl_easy_websocket {
+    () => {
+        /// Same as [`Easy2::ws_recv`](../easy/struct.Easy2.html#method.ws_recv).
+        /// Keep this handle attached to its multi for the entire session.
+        #[cfg(feature = "websocket")]
+        pub fn ws_recv(&mut self, data: &mut [u8]) -> Result<(usize, WsFrame), Error> {
+            self.easy.ws_recv(data)
+        }
+
+        /// Same as [`Easy2::ws_send`](../easy/struct.Easy2.html#method.ws_send).
+        /// Keep this handle attached to its multi for the entire session.
+        #[cfg(feature = "websocket")]
+        pub fn ws_send(
+            &mut self,
+            data: &[u8],
+            frame_size: u64,
+            flags: WsFlags,
+        ) -> Result<usize, Error> {
+            self.easy.ws_send(data, frame_size, flags)
+        }
+
+        /// Same as [`Easy2::ws_meta`](../easy/struct.Easy2.html#method.ws_meta).
+        #[cfg(feature = "websocket")]
+        pub fn ws_meta(&self) -> Option<WsFrame> {
+            self.easy.ws_meta()
+        }
+
+        /// Same as [`Easy2::ws_start_frame`](../easy/struct.Easy2.html#method.ws_start_frame).
+        #[cfg(feature = "ws_start_frame_8_16_0")]
+        pub fn ws_start_frame(&self, flags: WsFlags, frame_len: u64) -> Result<(), Error> {
+            self.easy.ws_start_frame(flags, frame_len)
+        }
+    };
+}
+
 impl EasyHandle {
     /// Sets an internal private token for this `EasyHandle`.
     ///
@@ -1008,6 +1046,8 @@ impl EasyHandle {
     }
 
     impl_easy_getters!();
+
+    impl_easy_websocket!();
 
     /// Unpause reading on a connection.
     ///
@@ -1072,6 +1112,8 @@ impl<H> Easy2Handle<H> {
     }
 
     impl_easy_getters!();
+
+    impl_easy_websocket!();
 
     /// Unpause reading on a connection.
     ///

@@ -3,8 +3,8 @@ name = "curl"
 version = "0.4.51"
 authors = ["Alex Crichton <alex@alexcrichton.com>", "Stephen M. Coakley <me@stephencoakley.com>"]
 license = "MIT"
-repository = "https://github.com/sagebind/curl-rust"
-homepage = "https://github.com/sagebind/curl-rust"
+repository = "https://github.com/lexmount/curl-rust"
+homepage = "https://github.com/lexmount/curl-rust"
 documentation = "https://docs.rs/curl"
 description = "Rust bindings to libcurl for making HTTP requests"
 categories = ["api-bindings", "web-programming::http-client"]
@@ -61,6 +61,8 @@ protocol-ftp = ["curl-sys/protocol-ftp"]
 zlib-ng-compat = ["curl-sys/zlib-ng-compat", "static-curl"]
 upkeep_7_62_0 = ["curl-sys/upkeep_7_62_0"]
 poll_7_68_0 = ["curl-sys/poll_7_68_0"]
+websocket = ["curl-sys/websocket"]
+ws_start_frame_8_16_0 = ["websocket", "curl-sys/ws_start_frame_8_16_0"]
 ntlm = ["curl-sys/ntlm"]
 
 [[test]]

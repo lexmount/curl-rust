@@ -3,6 +3,12 @@ use std::str;
 
 fn main() {
     let mut cfg = ctest2::TestGenerator::new();
+    if cfg!(feature = "websocket") {
+        cfg.cfg("feature", Some("websocket"));
+    }
+    if cfg!(feature = "ws_start_frame_8_16_0") {
+        cfg.cfg("feature", Some("ws_start_frame_8_16_0"));
+    }
 
     let mut build = cc::Build::new();
     build.file("version_detect.c");
@@ -52,6 +58,9 @@ fn main() {
     cfg.skip_signededness(|s| s.ends_with("callback") || s.ends_with("function"));
 
     cfg.skip_struct(move |s| {
+        if version < (7, 86) && s == "curl_ws_frame" {
+            return true;
+        }
         if version < (7, 71) {
             match s {
                 "curl_blob" => return true,
@@ -70,6 +79,16 @@ fn main() {
 
     // Version symbols are extracted from https://curl.se/libcurl/c/symbols-in-versions.html
     cfg.skip_const(move |s| {
+        if version < (7, 86) && (s.starts_with("CURLWS_") || s == "CURLOPT_WS_OPTIONS") {
+            return true;
+        }
+        // The option macros became long constants in 8.16.0.
+        if version < (8, 16) && matches!(s, "CURLWS_RAW_MODE" | "CURLWS_NOAUTOPONG") {
+            return true;
+        }
+        if version < (7, 45) && matches!(s, "CURLINFO_SOCKET" | "CURLINFO_ACTIVESOCKET") {
+            return true;
+        }
         if version < (8, 22) {
             match s {
                 "CURLAUTH_HTTPSIG"

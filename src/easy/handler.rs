@@ -16,6 +16,8 @@ use crate::easy::form;
 use crate::easy::list;
 use crate::easy::windows;
 use crate::easy::{Form, List};
+#[cfg(feature = "websocket")]
+use crate::easy::{WsFlags, WsFrame, WsOptions};
 use crate::panic;
 use crate::Error;
 
@@ -2112,6 +2114,29 @@ impl<H> Easy2<H> {
         self.setopt_long(curl_sys::CURLOPT_CONNECT_ONLY, enable as c_long)
     }
 
+    /// Stop after the HTTP upgrade handshake for a `ws://` or `wss://` URL.
+    ///
+    /// Enabling this sets `CURLOPT_CONNECT_ONLY` to 2; disabling it restores 0.
+    /// After a successful transfer, use `ws_send` and `ws_recv` to exchange
+    /// frames. With the multi interface, the easy handle must remain attached
+    /// to its multi handle for the entire WebSocket session, even after the
+    /// handshake reports completion. Removing it invalidates connection I/O.
+    ///
+    /// Requires libcurl 7.86.0 or newer with WebSocket support enabled. This
+    /// low-level API does not add browser handshake or message validation.
+    #[cfg(feature = "websocket")]
+    pub fn ws_connect_only(&mut self, enable: bool) -> Result<(), Error> {
+        self.setopt_long(curl_sys::CURLOPT_CONNECT_ONLY, if enable { 2 } else { 0 })
+    }
+
+    /// Configure WebSocket framing and automatic pong behavior.
+    ///
+    /// Corresponds to `CURLOPT_WS_OPTIONS`, added in libcurl 7.86.0.
+    #[cfg(feature = "websocket")]
+    pub fn ws_options(&mut self, options: &WsOptions) -> Result<(), Error> {
+        self.setopt_long(curl_sys::CURLOPT_WS_OPTIONS, options.bits)
+    }
+
     // /// Set interface to speak DNS over.
     // ///
     // /// Set the name of the network interface that the DNS resolver should bind
@@ -3377,6 +3402,122 @@ impl<H> Easy2<H> {
             );
             self.cvt(rc)?;
             Ok(n)
+        }
+    }
+
+    /// Returns the connection's active socket, if there is one.
+    ///
+    /// This is a borrowed socket owned by libcurl: do not close it. It can be
+    /// used to wait for readiness after a nonblocking send or receive returns
+    /// `Error::is_again()`. Query it after the connection is established.
+    /// Corresponds to `CURLINFO_ACTIVESOCKET`, added in libcurl 7.45.0.
+    pub fn active_socket(&self) -> Result<Option<curl_sys::curl_socket_t>, Error> {
+        let mut socket = curl_sys::CURL_SOCKET_BAD;
+        unsafe {
+            self.cvt(curl_sys::curl_easy_getinfo(
+                self.inner.handle,
+                curl_sys::CURLINFO_ACTIVESOCKET,
+                &mut socket,
+            ))?;
+        }
+        Ok(if socket == curl_sys::CURL_SOCKET_BAD {
+            None
+        } else {
+            Some(socket)
+        })
+    }
+
+    /// Receives a chunk of a WebSocket frame after `ws_connect_only` completes.
+    ///
+    /// Returns the payload byte count and an owned metadata snapshot. Check
+    /// `bytes_left()` for the end of a frame and `WsFlags::CONT` for the end of
+    /// a fragmented message. Control frames can occur between fragments.
+    ///
+    /// An empty buffer peeks at metadata without consuming payload; empty
+    /// frames are consumed. `Error::is_again()` means no chunk is ready yet:
+    /// wait for socket readability before retrying. An empty frame is not EOF;
+    /// a closed connection is reported as `CURLE_GOT_NOTHING`.
+    #[cfg(feature = "websocket")]
+    pub fn ws_recv(&mut self, data: &mut [u8]) -> Result<(usize, WsFrame), Error> {
+        let mut received = 0;
+        let mut meta = ptr::null();
+        unsafe {
+            self.cvt(curl_sys::curl_ws_recv(
+                self.inner.handle,
+                data.as_mut_ptr() as *mut _,
+                data.len(),
+                &mut received,
+                &mut meta,
+            ))?;
+            // libcurl's metadata is invalidated by the next WebSocket call.
+            // Copy it while this handle is exclusively borrowed.
+            let frame = meta
+                .as_ref()
+                .ok_or_else(|| Error::new(curl_sys::CURLE_RECV_ERROR))?;
+            Ok((received, WsFrame::from_raw(frame)))
+        }
+    }
+
+    /// Sends a WebSocket frame, returning the payload bytes consumed.
+    ///
+    /// Normally `frame_size` is zero. To supply a single frame across multiple
+    /// calls, set `WsFlags::OFFSET` on every call, pass the full payload length
+    /// on the first call, and zero on subsequent calls. Use `WsFlags::CONT` on
+    /// all but the final frame of a fragmented message, together with the
+    /// text or binary type on every frame.
+    ///
+    /// A successful call can consume fewer bytes than supplied. Retry with
+    /// only the remaining bytes. On `Error::is_again()`, wait for socket
+    /// readiness before retrying the same data. A zero-length payload is valid
+    /// and still sends a frame. Calls made from a libcurl callback can block.
+    #[cfg(feature = "websocket")]
+    pub fn ws_send(
+        &mut self,
+        data: &[u8],
+        frame_size: u64,
+        flags: WsFlags,
+    ) -> Result<usize, Error> {
+        let frame_size = curl_sys::curl_off_t::try_from(frame_size)
+            .map_err(|_| Error::new(curl_sys::CURLE_BAD_FUNCTION_ARGUMENT))?;
+        let mut sent = 0;
+        unsafe {
+            self.cvt(curl_sys::curl_ws_send(
+                self.inner.handle,
+                data.as_ptr() as *const _,
+                data.len(),
+                &mut sent,
+                frame_size,
+                flags.bits(),
+            ))?;
+        }
+        Ok(sent)
+    }
+
+    /// Copies the current write callback's WebSocket frame metadata.
+    ///
+    /// Returns `None` outside a WebSocket write callback or in raw mode. The
+    /// returned snapshot remains valid after further libcurl calls.
+    #[cfg(feature = "websocket")]
+    pub fn ws_meta(&self) -> Option<WsFrame> {
+        unsafe { curl_sys::curl_ws_meta(self.inner.handle).as_ref() }.map(WsFrame::from_raw)
+    }
+
+    /// Starts a frame from a WebSocket upload read callback.
+    ///
+    /// Set `upload(true)` and use the callback model (not `ws_connect_only`).
+    /// After this succeeds, supply exactly `frame_len` payload bytes through
+    /// the read callback before starting another frame. The call must be made
+    /// from that read callback. Requires libcurl 8.16.0 or newer.
+    #[cfg(feature = "ws_start_frame_8_16_0")]
+    pub fn ws_start_frame(&self, flags: WsFlags, frame_len: u64) -> Result<(), Error> {
+        let frame_len = curl_sys::curl_off_t::try_from(frame_len)
+            .map_err(|_| Error::new(curl_sys::CURLE_BAD_FUNCTION_ARGUMENT))?;
+        unsafe {
+            self.cvt(curl_sys::curl_ws_start_frame(
+                self.inner.handle,
+                flags.bits(),
+                frame_len,
+            ))
         }
     }
 
