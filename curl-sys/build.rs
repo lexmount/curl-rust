@@ -140,7 +140,7 @@ fn main() {
         .file("curl/lib/cf-ip-happy.c")
         .file("curl/lib/cf-socket.c")
         .file("curl/lib/cfilters.c")
-        .file("curl/lib/conncache.c")
+        .file(connection_cache_source(&dst))
         .file("curl/lib/connect.c")
         .file("curl/lib/content_encoding.c")
         .file("curl/lib/cookie.c")
@@ -567,6 +567,24 @@ fn try_pkg_config() -> bool {
         println!("cargo:include={}", path.display());
     }
     true
+}
+
+fn connection_cache_source(dst: &Path) -> PathBuf {
+    // CONNECT_ONLY transfers detach after the handshake, but their sockets
+    // still belong to the application. Per-host eviction must exclude them
+    // just like cpool_get_oldest_idle does for the total connection limit.
+    let source = PathBuf::from("curl/lib/conncache.c");
+    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    let before = "    if(!CONN_INUSE(conn)) {\n      /* Set higher score for the age passed since the connection was used */";
+    let after = "    if(!CONN_INUSE(conn) && !conn->bits.close && !conn->connect_only) {\n      /* Set higher score for the age passed since the connection was used */";
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the connect-only connection eviction patch against bundled libcurl"
+    );
+    let patched = dst.join("conncache.c");
+    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
 }
 
 fn websocket_source(dst: &Path) -> PathBuf {

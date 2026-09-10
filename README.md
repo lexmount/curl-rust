@@ -67,6 +67,12 @@ after each bounded socket read, so a small `ws_recv()` does not drain an
 arbitrarily large stream into libcurl's internal receive queue before the caller
 can pause reading. System library builds do not get these fixes.
 
+Bundled builds also preserve application-owned `CONNECT_ONLY` sockets when
+the per-host connection limit is reached, matching the total-limit eviction
+policy. A quiet upgraded WebSocket still consumes a connection slot; a new
+transfer waits for capacity instead of evicting it. This fix is generated in
+`OUT_DIR/conncache.c`, with the same submodule and patch-location checks.
+
 Local validation (including C structure and function ABI checks):
 
 ```sh
