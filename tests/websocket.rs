@@ -480,6 +480,67 @@ fn multi_handle_retains_connection_until_removed() {
     done_tx.send(()).unwrap();
 }
 
+#[cfg(feature = "static-curl")]
+fn connection_limit_preserves_quiet_websocket(total: bool) {
+    let server = Server::new(|mut stream| {
+        // Stay silent until the competing HTTP transfer has reached its own
+        // deadline. Its admission must not evict this application-owned socket.
+        assert_eq!(read_frame(&mut stream), (0x81, b"still open".to_vec()));
+        stream.write_all(&frame(0x81, b"echo")).unwrap();
+    });
+    let mut multi = Multi::new();
+    if total {
+        multi.set_max_total_connections(1).unwrap();
+    } else {
+        multi.set_max_host_connections(1).unwrap();
+    }
+    let mut websocket = multi.add2(server.easy2(Empty)).unwrap();
+    finish_handshake(&multi);
+
+    let mut http = Easy2::new(Empty);
+    http.url(&format!("http://{}/queued", server.addr)).unwrap();
+    http.proxy("").unwrap();
+    http.timeout(Duration::from_millis(200)).unwrap();
+    let http = multi.add2(http).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while multi.perform().unwrap() > 0 {
+        assert!(Instant::now() < deadline);
+        multi.wait(&mut [], Duration::from_millis(20)).unwrap();
+    }
+    let mut result = None;
+    multi.messages(|message| {
+        if let Some(completed) = message.result_for2(&http) {
+            result = Some(completed);
+        }
+    });
+    let error = result.expect("queued HTTP completed").unwrap_err();
+    assert!(
+        error.is_operation_timedout(),
+        "expected pool wait: {}",
+        error
+    );
+    drop(multi.remove2(http).unwrap());
+
+    send(&mut websocket, b"still open", 0, WsFlags::TEXT);
+    let mut buffer = [0; 16];
+    let (len, meta) = receive(&mut websocket, &mut buffer);
+    assert_eq!(meta.flags(), WsFlags::TEXT);
+    assert_eq!(&buffer[..len], b"echo");
+    drop(multi.remove2(websocket).unwrap());
+}
+
+#[test]
+#[cfg(feature = "static-curl")]
+fn host_connection_limit_preserves_quiet_websocket() {
+    connection_limit_preserves_quiet_websocket(false);
+}
+
+#[test]
+#[cfg(feature = "static-curl")]
+fn total_connection_limit_preserves_quiet_websocket() {
+    connection_limit_preserves_quiet_websocket(true);
+}
+
 #[test]
 #[cfg(feature = "static-curl")]
 fn http10_upgrade_retains_easy_connection() {
