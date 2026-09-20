@@ -9,7 +9,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Tunnel {
     address: SocketAddr,
-    thread: Option<JoinHandle<(String, String)>>,
+    thread: Option<JoinHandle<(Vec<u8>, Vec<u8>)>>,
 }
 
 impl Tunnel {
@@ -40,8 +40,16 @@ impl Tunnel {
         format!("http://{}", self.address)
     }
 
-    fn finish(mut self) -> (String, String) {
+    fn finish_bytes(mut self) -> (Vec<u8>, Vec<u8>) {
         self.thread.take().unwrap().join().unwrap()
+    }
+
+    fn finish(self) -> (String, String) {
+        let (connect, request) = self.finish_bytes();
+        (
+            String::from_utf8(connect).unwrap().to_ascii_lowercase(),
+            String::from_utf8(request).unwrap().to_ascii_lowercase(),
+        )
     }
 }
 
@@ -55,7 +63,7 @@ impl Drop for Tunnel {
     }
 }
 
-fn read_headers(stream: &mut TcpStream) -> String {
+fn read_headers(stream: &mut TcpStream) -> Vec<u8> {
     let mut bytes = Vec::new();
     while !bytes.ends_with(b"\r\n\r\n") {
         let mut byte = [0];
@@ -63,7 +71,7 @@ fn read_headers(stream: &mut TcpStream) -> String {
         bytes.push(byte[0]);
         assert!(bytes.len() <= 64 * 1024);
     }
-    String::from_utf8(bytes).unwrap().to_ascii_lowercase()
+    bytes
 }
 
 fn headers(value: &str) -> List {
@@ -126,4 +134,53 @@ fn easy_proxy_headers_can_be_cleared_and_reset() {
         assert!(!connect.contains("x-proxy-secret"));
         assert!(!request.contains("x-proxy-secret"));
     }
+}
+
+#[test]
+fn easy2_byte_headers_are_owned_replaced_and_isolated_from_proxy() {
+    let tunnel = Tunnel::new();
+    let mut easy = Easy2::new(Empty);
+    easy.url("http://origin.invalid/socket").unwrap();
+    easy.proxy(&tunnel.proxy()).unwrap();
+    easy.noproxy("").unwrap();
+    easy.http_proxy_tunnel(true).unwrap();
+    easy.timeout(TIMEOUT).unwrap();
+    easy.separate_proxy_headers(true).unwrap();
+    easy.http_headers(headers("X-Origin-Raw: obsolete"))
+        .unwrap();
+    easy.proxy_headers(headers("X-Proxy-Raw: obsolete"))
+        .unwrap();
+    {
+        let mut origin = List::new();
+        origin.append_bytes(b"X-Origin-Raw: \xe9\xff").unwrap();
+        origin.append_bytes(b"X-Empty;").unwrap();
+        easy.http_headers(origin).unwrap();
+
+        let mut proxy = List::new();
+        proxy.append_bytes(b"X-Proxy-Raw: \xff\x80").unwrap();
+        easy.proxy_headers(proxy).unwrap();
+    }
+    easy.perform().unwrap();
+    let (connect, request) = tunnel.finish_bytes();
+    assert!(connect
+        .windows(b"X-Proxy-Raw: \xff\x80\r\n".len())
+        .any(|part| part == b"X-Proxy-Raw: \xff\x80\r\n"));
+    assert!(request
+        .windows(b"X-Origin-Raw: \xe9\xff\r\n".len())
+        .any(|part| part == b"X-Origin-Raw: \xe9\xff\r\n"));
+    assert!(request
+        .windows(b"X-Empty:\r\n".len())
+        .any(|part| part == b"X-Empty:\r\n"));
+    assert!(!connect
+        .windows(b"X-Origin-Raw".len())
+        .any(|part| part == b"X-Origin-Raw"));
+    assert!(!request
+        .windows(b"X-Proxy-Raw".len())
+        .any(|part| part == b"X-Proxy-Raw"));
+    assert!(!connect
+        .windows(b"obsolete".len())
+        .any(|part| part == b"obsolete"));
+    assert!(!request
+        .windows(b"obsolete".len())
+        .any(|part| part == b"obsolete"));
 }

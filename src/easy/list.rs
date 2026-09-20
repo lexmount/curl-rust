@@ -4,7 +4,7 @@ use std::ptr;
 
 use crate::Error;
 
-/// A linked list of a strings
+/// A linked list of NUL-terminated byte strings.
 pub struct List {
     raw: *mut curl_sys::curl_slist,
 }
@@ -36,10 +36,21 @@ impl List {
 
     /// Appends some data into this list.
     pub fn append(&mut self, data: &str) -> Result<(), Error> {
+        self.append_bytes(data.as_bytes())
+    }
+
+    /// Appends bytes into this list without requiring UTF-8.
+    ///
+    /// The list owns a copy of the data. Interior NUL bytes are not allowed.
+    /// If allocation fails or the data contains a NUL byte, this returns an
+    /// error and leaves the existing list unchanged.
+    pub fn append_bytes(&mut self, data: &[u8]) -> Result<(), Error> {
         let data = CString::new(data)?;
         unsafe {
             let raw = curl_sys::curl_slist_append(self.raw, data.as_ptr());
-            assert!(!raw.is_null());
+            if raw.is_null() {
+                return Err(Error::new(curl_sys::CURLE_OUT_OF_MEMORY));
+            }
             self.raw = raw;
             Ok(())
         }
@@ -98,5 +109,40 @@ impl<'a> fmt::Debug for Iter<'a> {
         f.debug_list()
             .entries(self.clone().map(String::from_utf8_lossy))
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::List;
+
+    #[test]
+    fn append_bytes_owns_non_utf8_data_and_preserves_order() {
+        let mut list = List::new();
+        let mut bytes = b"X-Raw: \xe9\xff".to_vec();
+        list.append_bytes(&bytes).unwrap();
+        bytes.fill(b'x');
+        drop(bytes);
+        list.append("X-Raw: é").unwrap();
+        list.append_bytes(b"").unwrap();
+
+        assert_eq!(
+            list.iter().collect::<Vec<_>>(),
+            vec![b"X-Raw: \xe9\xff".as_slice(), "X-Raw: é".as_bytes(), b""],
+        );
+    }
+
+    #[test]
+    fn append_rejects_nul_without_changing_existing_entries() {
+        let mut list = List::new();
+        list.append_bytes(b"X-Raw: \xff").unwrap();
+        assert!(list.append_bytes(b"before\0after").is_err());
+        assert!(list.append("before\0after").is_err());
+        list.append_bytes(b"X-Raw: after").unwrap();
+
+        assert_eq!(
+            list.iter().collect::<Vec<_>>(),
+            vec![b"X-Raw: \xff".as_slice(), b"X-Raw: after"],
+        );
     }
 }
