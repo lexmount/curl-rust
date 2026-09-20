@@ -1593,9 +1593,9 @@ impl<H> Easy2<H> {
     /// handle.perform().unwrap();
     /// ```
     pub fn http_headers(&mut self, list: List) -> Result<(), Error> {
-        let ptr = list::raw(&list);
+        self.setopt_ptr(curl_sys::CURLOPT_HTTPHEADER, list::raw(&list) as *const _)?;
         self.inner.header_list = Some(list);
-        self.setopt_ptr(curl_sys::CURLOPT_HTTPHEADER, ptr as *const _)
+        Ok(())
     }
 
     /// Sets custom headers for HTTP proxy requests.
