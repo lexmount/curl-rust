@@ -695,7 +695,22 @@ impl<H: Handler> Easy2<H> {
         }
     }
 
-    #[cfg(not(need_openssl_probe))]
+    #[cfg(apple_sectrust)]
+    fn ssl_configure(&mut self) {
+        // Setting any CA option, even to an automatically discovered file,
+        // disables libcurl's default SecTrust selection. Only explicit
+        // environment overrides should select file-based verification here.
+        // Do not require the paths to exist: a bad override must fail instead
+        // of silently falling back to a different trust source.
+        if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+            let _ = self.cainfo(Path::new(&path));
+        }
+        if let Some(path) = std::env::var_os("SSL_CERT_DIR") {
+            let _ = self.capath(Path::new(&path));
+        }
+    }
+
+    #[cfg(not(any(need_openssl_probe, apple_sectrust)))]
     fn ssl_configure(&mut self) {}
 }
 

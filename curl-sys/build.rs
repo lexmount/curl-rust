@@ -357,6 +357,15 @@ fn main() {
             cfg.define("USE_OPENSSL", None)
                 .file("curl/lib/vtls/openssl.c");
 
+            // Keep the OpenSSL-compatible TLS backend (including AWS-LC), but
+            // use the platform verifier by default on macOS. Both the macro
+            // and the implementation are required by vtls/openssl.c.
+            if target.ends_with("-apple-darwin") {
+                cfg.define("USE_APPLE_SECTRUST", None)
+                    .file("curl/lib/vtls/apple.c");
+                println!("cargo:apple_sectrust=1");
+            }
+
             println!("cargo:rustc-cfg=link_openssl");
             if let Some(path) = env::var_os("DEP_OPENSSL_INCLUDE") {
                 cfg.include(path);
