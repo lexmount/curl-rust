@@ -191,7 +191,7 @@ fn main() {
         .file("curl/lib/hostip.c")
         .file("curl/lib/hostip6.c")
         .file("curl/lib/hsts.c")
-        .file("curl/lib/http.c")
+        .file(http_source(&dst))
         .file("curl/lib/http1.c")
         .file("curl/lib/http_aws_sigv4.c")
         .file("curl/lib/http_chunks.c")
@@ -320,8 +320,7 @@ fn main() {
             .include(env::var_os("DEP_RUSTLS_FFI_INCLUDE").unwrap());
     } else if cfg!(feature = "windows-static-ssl") {
         if windows {
-            cfg.define("USE_OPENSSL", None)
-                .file("curl/lib/vtls/openssl.c");
+            cfg.define("USE_OPENSSL", None).file(openssl_source(&dst));
             // We need both openssl and zlib
             // Those can be installed with
             // ```shell
@@ -354,8 +353,7 @@ fn main() {
                 .file("curl/lib/vtls/schannel_verify.c")
                 .file("curl/lib/vtls/x509asn1.c");
         } else {
-            cfg.define("USE_OPENSSL", None)
-                .file("curl/lib/vtls/openssl.c");
+            cfg.define("USE_OPENSSL", None).file(openssl_source(&dst));
 
             // Keep the OpenSSL-compatible TLS backend (including AWS-LC), but
             // use the platform verifier by default on macOS. Both the macro
@@ -576,6 +574,90 @@ fn try_pkg_config() -> bool {
         println!("cargo:include={}", path.display());
     }
     true
+}
+
+fn http_source(dst: &Path) -> PathBuf {
+    let source = PathBuf::from("curl/lib/http.c");
+    if !cfg!(feature = "allow-missing-close-notify") {
+        return source;
+    }
+
+    // Unlike close-delimited bodies, HTTPS response headers must be complete.
+    // libcurl otherwise accepts a final status line without the terminating
+    // empty line. Preserve the browser's truncation protection when accepting
+    // transport EOF in the TLS layer (also applies to a clean TLS shutdown).
+    let before = r#"  if(!premature && /* this check is pointless when DONE is called before the
+                      entire operation is complete */"#;
+    let after = r#"  if(!premature && !conn->bits.retry && !data->set.connect_only &&
+     data->req.header && (conn->scheme->flags & PROTOPT_SSL)) {
+    failf(data, "Incomplete HTTPS response headers");
+    streamclose(conn, "Incomplete HTTPS response headers");
+    return CURLE_RECV_ERROR;
+  }
+
+  if(!premature && /* this check is pointless when DONE is called before the
+                      entire operation is complete */"#;
+    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the HTTPS header completion patch against bundled libcurl"
+    );
+    let patched = dst.join("http.c");
+    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
+}
+
+fn openssl_source(dst: &Path) -> PathBuf {
+    let source = PathBuf::from("curl/lib/vtls/openssl.c");
+    if !cfg!(feature = "allow-missing-close-notify") {
+        return source;
+    }
+
+    // Browsers accept transport EOF without a TLS close_notify after the
+    // handshake. Leave TLS alerts, socket errors and handshake failures intact;
+    // the protocol parser must still reject incomplete framed responses.
+    // Apply only to ossl_recv, where peer_closed proves a real transport EOF.
+    // Generate a translation unit as for the other bundled libcurl patches.
+    let mut contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    let before = r#"      sslerror = ERR_get_error();
+      if((nread < 0) || sslerror) {"#;
+    let after = r#"      sslerror = ERR_get_error();
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+      /* OpenSSL 3 reports a missing close_notify as a protocol error. */
+      if(err == SSL_ERROR_SSL &&
+         ERR_GET_LIB(sslerror) == ERR_LIB_SSL &&
+         ERR_GET_REASON(sslerror) == SSL_R_UNEXPECTED_EOF_WHILE_READING &&
+         !octx->io_result && connssl->peer_closed) {
+        CURL_TRC_CF(data, cf, "TLS transport EOF without close_notify");
+        goto out;
+      }
+#endif
+      if((nread < 0) || sslerror) {"#;
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the OpenSSL 3 receive EOF patch against bundled libcurl"
+    );
+    contents = contents.replacen(before, after, 1);
+
+    let before = r#"        else if(connssl->peer_closed) {
+          failf(data, "Connection closed abruptly");
+          result = CURLE_RECV_ERROR;
+        }"#;
+    let after = r#"        else if(connssl->peer_closed) {
+          /* AWS-LC/BoringSSL and older OpenSSL report this as SYSCALL with
+             zero bytes, no error queue entry and no underlying I/O error. */
+          CURL_TRC_CF(data, cf, "TLS transport EOF without close_notify");
+        }"#;
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the legacy OpenSSL receive EOF patch against bundled libcurl"
+    );
+    let patched = dst.join("openssl.c");
+    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
 }
 
 fn connection_cache_source(dst: &Path) -> PathBuf {

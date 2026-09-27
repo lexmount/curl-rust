@@ -218,6 +218,15 @@ with various Cargo features:
   ./vcpkg.exe install openssl:x64-windows-static-md
   ```
 
+Browser embedders can opt in to `curl-sys/allow-missing-close-notify`. It enables
+bundled libcurl and accepts transport EOF without a TLS `close_notify` after the
+handshake in the OpenSSL backend, including AWS-LC and BoringSSL. This allows
+close-delimited HTTP responses to finish as they do in browsers. Certificate
+verification, TLS protocol errors, and socket errors still fail. HTTPS response
+headers must be complete, and HTTP framing still rejects incomplete
+Content-Length, chunked, and HTTP/2 responses. The option is disabled by default;
+it does not change EOF handling in other TLS backends.
+
 ## Version Support
 
 The bindings have been developed using curl version 7.24.0. They should

@@ -48,6 +48,11 @@ brotli = ["brotlic-sys"]
 mesalink = []
 rustls = ["rustls-ffi"]
 static-curl = []
+# Browser TLS semantics: accept transport EOF without close_notify after the
+# handshake. HTTP framing still detects incomplete fixed-length/chunked bodies.
+# HTTPS responses must contain a complete final header section.
+# Applies to the bundled OpenSSL backend, including AWS-LC and BoringSSL.
+allow-missing-close-notify = ["static-curl"]
 windows-static-ssl = []
 static-ssl = ["openssl-sys/vendored"]
 spnego = []
