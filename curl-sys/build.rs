@@ -131,7 +131,7 @@ fn main() {
             .replace("@LIBCURL_LIBS@", "")
             .replace("@SUPPORT_FEATURES@", "")
             .replace("@SUPPORT_PROTOCOLS@", "")
-            .replace("@CURLVERSION@", "8.22.0"),
+            .replace("@CURLVERSION@", "8.23.0"),
     )
     .unwrap();
 
@@ -152,7 +152,7 @@ fn main() {
         .define("CURL_DISABLE_TELNET", None)
         .define("CURL_DISABLE_TFTP", None)
         .define("CURL_STATICLIB", None)
-        .define("ENABLE_IPV6", None)
+        .define("USE_IPV6", None)
         .define("HAVE_SOCKADDR_IN6_SIN6_SCOPE_ID", None)
         .define("HAVE_ASSERT_H", None)
         .define("CURL_OS", "\"unknown\"") // TODO
@@ -175,7 +175,7 @@ fn main() {
         .file("curl/lib/cf-setup.c")
         .file("curl/lib/cf-socket.c")
         .file("curl/lib/cfilters.c")
-        .file(connection_cache_source(&dst))
+        .file("curl/lib/conncache.c")
         .file("curl/lib/connect.c")
         .file("curl/lib/content_encoding.c")
         .file("curl/lib/cookie.c")
@@ -194,7 +194,7 @@ fn main() {
         .file("curl/lib/curlx/base64.c")
         .file("curl/lib/curlx/basename.c")
         .file("curl/lib/curlx/dynbuf.c")
-        .file("curl/lib/curlx/fopen.c")
+        .file("curl/lib/curlx/win32-fopen.c")
         .file("curl/lib/curlx/inet_ntop.c")
         .file("curl/lib/curlx/inet_pton.c")
         .file("curl/lib/curlx/nonblock.c")
@@ -251,6 +251,7 @@ fn main() {
         .file("curl/lib/progress.c")
         .file("curl/lib/protocol.c")
         .file("curl/lib/proxy.c")
+        .file("curl/lib/ptrarray.c")
         .file("curl/lib/rand.c")
         .file("curl/lib/ratelimit.c")
         .file("curl/lib/request.c")
@@ -260,7 +261,6 @@ fn main() {
         .file("curl/lib/setopt.c")
         .file("curl/lib/sha256.c")
         .file("curl/lib/slist.c")
-        .file("curl/lib/smb.c")
         .file("curl/lib/smtp.c")
         .file("curl/lib/socketpair.c")
         .file("curl/lib/socks.c")
@@ -273,9 +273,9 @@ fn main() {
         .file("curl/lib/thrdpool.c")
         .file("curl/lib/thrdqueue.c")
         .file("curl/lib/transfer.c")
+        .file("curl/lib/u8_strset.c")
+        .file("curl/lib/u32_ptrset.c")
         .file("curl/lib/uint-bset.c")
-        .file("curl/lib/uint-hash.c")
-        .file("curl/lib/uint-hashset.c")
         .file("curl/lib/uint-spbset.c")
         .file("curl/lib/uint-table.c")
         .file("curl/lib/url.c")
@@ -423,7 +423,6 @@ fn main() {
             .define("HAVE_IOCTLSOCKET_FIONBIO", None)
             .define("USE_WINSOCK", None)
             .file("curl/lib/bufref.c")
-            .file("curl/lib/system_win32.c")
             .file("curl/lib/vauth/digest_sspi.c")
             .file("curl/lib/curlx/multibyte.c")
             .file("curl/lib/curlx/version_win32.c")
@@ -624,24 +623,6 @@ fn try_pkg_config() -> bool {
     true
 }
 
-fn connection_cache_source(dst: &Path) -> PathBuf {
-    // CONNECT_ONLY transfers detach after the handshake, but their sockets
-    // still belong to the application. Per-host eviction must exclude them
-    // just like cpool_get_oldest_idle does for the total connection limit.
-    let source = PathBuf::from("curl/lib/conncache.c");
-    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
-    let before = "    if(!CONN_INUSE(conn)) {\n      /* Set higher score for the age passed since the connection was used */";
-    let after = "    if(!CONN_INUSE(conn) && !conn->bits.close && !conn->connect_only) {\n      /* Set higher score for the age passed since the connection was used */";
-    assert_eq!(
-        contents.matches(before).count(),
-        1,
-        "recheck the connect-only connection eviction patch against bundled libcurl"
-    );
-    let patched = dst.join("conncache.c");
-    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
-    patched
-}
-
 fn websocket_source(dst: &Path) -> PathBuf {
     let source = PathBuf::from("curl/lib/ws.c");
     if !cfg!(feature = "websocket") {
@@ -654,7 +635,7 @@ fn websocket_source(dst: &Path) -> PathBuf {
     // patched translation unit without modifying the pinned upstream submodule
     // or requiring a patch executable on Windows. Recheck on libcurl updates.
     let before = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n";
-    let after = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n\n  /* HTTP persistence no longer governs an accepted protocol upgrade. */\n  if(k->httpversion == 10)\n    connkeep(data->conn, \"WebSocket upgrade\");\n";
+    let after = "  k->upgr101 = UPGR101_RECEIVED;\n  k->header = FALSE; /* we will not get more responses */\n\n  /* HTTP persistence no longer governs an accepted protocol upgrade. */\n  if(k->httpversion == 10)\n    connkeep(data->conn);\n";
     let mut contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
     assert_eq!(
         contents.matches(before).count(),
@@ -667,8 +648,15 @@ fn websocket_source(dst: &Path) -> PathBuf {
     // can prefetch an entire stream before returning one payload chunk and
     // prevent the caller from applying receive backpressure. Read one bounded
     // buffer chunk instead, then let the WebSocket decoder return to the caller.
-    let before = "Curl_bufq_slurp(&ws->recvbuf, nw_in_recv, data, &n)";
-    let after = "Curl_bufq_sipn(&ws->recvbuf, 0, nw_in_recv, data, &n)";
+    // Newer libcurl queues automatic PONGs. Flush them before another read:
+    // a peer may wait for the PONG before sending any application payload.
+    let before = "        result = Curl_bufq_slurp(&ws->recvbuf, nw_in_recv, data, &n);";
+    let after = r#"        if(!data->set.ws_raw_mode && !ws->using_reader && ws->pending.type) {
+          result = ws_flush(data, ws, Curl_api_is_in_callback(data));
+          if(result && result != CURLE_AGAIN)
+            goto out;
+        }
+        result = Curl_bufq_sipn(&ws->recvbuf, 0, nw_in_recv, data, &n);"#;
     assert_eq!(
         contents.matches(before).count(),
         1,
