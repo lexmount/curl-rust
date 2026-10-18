@@ -21,6 +21,56 @@ use crate::server::Server;
 mod server;
 
 #[test]
+fn callback_panic_is_rethrown_and_does_not_poison_later_transfers() {
+    use curl::easy::{Easy2, Handler};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    struct PanicOnce(bool);
+    impl Handler for PanicOnce {
+        fn header(&mut self, _: &[u8]) -> bool {
+            if std::mem::replace(&mut self.0, false) {
+                panic!("header callback panic");
+            }
+            true
+        }
+    }
+
+    let response_server = || {
+        let server = Server::new();
+        server.receive("GET / HTTP/1.1\r\nHost: 127.0.0.1:$PORT\r\nAccept: */*\r\n\r\n");
+        server.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        server
+    };
+    let first = response_server();
+    let multi = Multi::new();
+    let mut easy = Easy2::new(PanicOnce(true));
+    t!(easy.url(&first.url("/")));
+    t!(easy.proxy(""));
+    t!(easy.timeout(Duration::from_secs(10)));
+    let handle = t!(multi.add2(easy));
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        while t!(multi.perform()) > 0 {
+            t!(multi.wait(&mut [], Duration::from_secs(1)));
+        }
+    }))
+    .unwrap_err();
+    assert_eq!(panic.downcast_ref::<&str>(), Some(&"header callback panic"));
+    let mut easy = t!(multi.remove2(handle));
+    let second = response_server();
+    t!(easy.url(&second.url("/")));
+    let handle = t!(multi.add2(easy));
+    while t!(multi.perform()) > 0 {
+        t!(multi.wait(&mut [], Duration::from_secs(1)));
+    }
+    let mut completed = false;
+    multi.messages(|message| {
+        t!(message.result_for2(&handle).unwrap());
+        completed = true;
+    });
+    assert!(completed);
+}
+
+#[test]
 fn smoke() {
     let m = Multi::new();
     let mut e = Easy::new();

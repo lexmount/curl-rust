@@ -539,12 +539,14 @@ impl Multi {
     pub fn action(&self, socket: Socket, events: &Events) -> Result<u32, MultiError> {
         let mut remaining = 0;
         unsafe {
-            cvt(curl_sys::curl_multi_socket_action(
+            let result = curl_sys::curl_multi_socket_action(
                 self.inner.raw.handle,
                 socket,
                 events.bits,
                 &mut remaining,
-            ))?;
+            );
+            panic::propagate();
+            cvt(result)?;
             Ok(remaining as u32)
         }
     }
@@ -567,12 +569,14 @@ impl Multi {
     pub fn timeout(&self) -> Result<u32, MultiError> {
         let mut remaining = 0;
         unsafe {
-            cvt(curl_sys::curl_multi_socket_action(
+            let result = curl_sys::curl_multi_socket_action(
                 self.inner.raw.handle,
                 curl_sys::CURL_SOCKET_BAD,
                 0,
                 &mut remaining,
-            ))?;
+            );
+            panic::propagate();
+            cvt(result)?;
             Ok(remaining as u32)
         }
     }
@@ -752,10 +756,12 @@ impl Multi {
     pub fn perform(&self) -> Result<u32, MultiError> {
         unsafe {
             let mut ret = 0;
-            cvt(curl_sys::curl_multi_perform(
-                self.inner.raw.handle,
-                &mut ret,
-            ))?;
+            let result = curl_sys::curl_multi_perform(self.inner.raw.handle, &mut ret);
+            // Re-throw only after libcurl has returned, just as Easy2::perform
+            // does. Leaving the stored panic behind suppresses later callbacks
+            // on this thread, even for otherwise unrelated transfers.
+            panic::propagate();
+            cvt(result)?;
             Ok(ret as u32)
         }
     }
