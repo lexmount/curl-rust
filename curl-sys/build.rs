@@ -8,6 +8,7 @@ fn main() {
     println!(
         "cargo:rustc-check-cfg=cfg(\
             link_brotli,\
+            link_zstd,\
             libcurl_vendored,\
             link_libnghttp2,\
             link_libz,\
@@ -297,6 +298,16 @@ fn main() {
         cfg.define("HAVE_BROTLI", None)
             .include(find_brotli_include());
         println!("cargo:rustc-cfg=link_brotli");
+    }
+
+    if cfg!(feature = "zstd") {
+        cfg.define("HAVE_ZSTD", None);
+        let includes =
+            env::var("DEP_ZSTD_INCLUDE").expect("zstd-sys must expose its include paths");
+        for include in includes.split(';') {
+            cfg.include(include);
+        }
+        println!("cargo:rustc-cfg=link_zstd");
     }
 
     println!("cargo:rustc-cfg=link_libz");
