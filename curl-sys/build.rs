@@ -220,7 +220,7 @@ fn main() {
         .file("curl/lib/request.c")
         .file("curl/lib/rtsp.c")
         .file("curl/lib/select.c")
-        .file("curl/lib/sendf.c")
+        .file(download_accounting_source(&dst))
         .file("curl/lib/setopt.c")
         .file("curl/lib/sha256.c")
         .file("curl/lib/slist.c")
@@ -656,6 +656,50 @@ fn openssl_source(dst: &Path) -> PathBuf {
         "recheck the legacy OpenSSL receive EOF patch against bundled libcurl"
     );
     let patched = dst.join("openssl.c");
+    fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
+}
+
+fn download_accounting_source(dst: &Path) -> PathBuf {
+    let source = PathBuf::from("curl/lib/sendf.c");
+    let contents = fs::read_to_string(&source).unwrap().replace("\r\n", "\n");
+    let before = r#"  if(!data->req.ignorebody && (nwrite || (type & CLIENTWRITE_EOS))) {
+    result = Curl_cwriter_write(data, writer->next, type, buf, nwrite);
+    CURL_TRC_WRITE(data, "download_write body(type=%x, blen=%zu) -> %d",
+                   type, nbytes, result);
+    if(result)
+      return result;
+  }
+
+  /* Update stats, write and report progress */
+  if(nwrite) {
+    data->req.bytecount += nwrite;
+    Curl_pgrs_download_inc(data, nwrite);
+  }
+"#;
+    let after = r#"  /* Account for the received, transfer-decoded payload before passing it
+   * to content decoders or application writers. A downstream error does
+   * not undo receipt of these bytes. The pause writer is also downstream,
+   * so resuming a paused consumer does not count them again. */
+  if(nwrite) {
+    data->req.bytecount += nwrite;
+    Curl_pgrs_download_inc(data, nwrite);
+  }
+
+  if(!data->req.ignorebody && (nwrite || (type & CLIENTWRITE_EOS))) {
+    result = Curl_cwriter_write(data, writer->next, type, buf, nwrite);
+    CURL_TRC_WRITE(data, "download_write body(type=%x, blen=%zu) -> %d",
+                   type, nbytes, result);
+    if(result)
+      return result;
+  }
+"#;
+    assert_eq!(
+        contents.matches(before).count(),
+        1,
+        "recheck the received-body download accounting fix against bundled libcurl"
+    );
+    let patched = dst.join("sendf.c");
     fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
     patched
 }

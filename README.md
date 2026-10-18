@@ -73,6 +73,13 @@ policy. A quiet upgraded WebSocket still consumes a connection slot; a new
 transfer waits for capacity instead of evicting it. This fix is generated in
 `OUT_DIR/conncache.c`, with the same submodule and patch-location checks.
 
+Bundled builds count received response body bytes after transfer decoding and
+before content decoding or application delivery. A decompression or write error
+therefore retains the actual download size and progress; chunk framing and
+trailers are excluded, and empty or HEAD responses remain zero. Paused writes
+are still counted once. The generated `OUT_DIR/sendf.c` applies the same
+pinned-source guard as the other bundled fixes.
+
 Local validation (including C structure and function ABI checks):
 
 ```sh
