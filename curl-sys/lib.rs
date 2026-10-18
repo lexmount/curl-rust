@@ -199,6 +199,11 @@ pub const CURLINFO_SSL_DATA_OUT: curl_infotype = 6;
 pub type curl_debug_callback =
     extern "C" fn(*mut CURL, curl_infotype, *mut c_char, size_t, *mut c_void) -> c_int;
 
+pub const CURL_PREREQFUNC_OK: c_int = 0;
+pub const CURL_PREREQFUNC_ABORT: c_int = 1;
+pub type curl_prereq_callback =
+    extern "C" fn(*mut c_void, *mut c_char, *mut c_char, c_int, c_int) -> c_int;
+
 pub const CURLE_OK: CURLcode = 0;
 pub const CURLE_UNSUPPORTED_PROTOCOL: CURLcode = 1;
 pub const CURLE_FAILED_INIT: CURLcode = 2;
@@ -648,6 +653,8 @@ pub const CURLOPT_HTTPSIG_ALGORITHM: CURLoption = CURLOPTTYPE_VALUES + 329;
 pub const CURLOPT_HTTPSIG_KEY: CURLoption = CURLOPTTYPE_OBJECTPOINT + 330;
 pub const CURLOPT_HTTPSIG_KEYID: CURLoption = CURLOPTTYPE_OBJECTPOINT + 331;
 pub const CURLOPT_HTTPSIG_HEADERS: CURLoption = CURLOPTTYPE_OBJECTPOINT + 332;
+pub const CURLOPT_PREREQFUNCTION: CURLoption = CURLOPTTYPE_FUNCTIONPOINT + 312;
+pub const CURLOPT_PREREQDATA: CURLoption = CURLOPTTYPE_OBJECTPOINT + 313;
 
 pub const CURLOPT_WS_OPTIONS: CURLoption = CURLOPTTYPE_LONG + 320;
 

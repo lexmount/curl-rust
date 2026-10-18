@@ -110,6 +110,7 @@ struct Callbacks<'a> {
     read: Option<Box<dyn FnMut(&mut [u8]) -> Result<usize, ReadError> + 'a>>,
     seek: Option<Box<dyn FnMut(SeekFrom) -> SeekResult + 'a>>,
     debug: Option<Box<dyn FnMut(InfoType, &[u8]) + 'a>>,
+    prereq: Option<Box<dyn FnMut(&str, &str, u16, u16) -> bool + 'a>>,
     header: Option<Box<dyn FnMut(&[u8]) -> bool + 'a>>,
     progress: Option<Box<dyn FnMut(f64, f64, f64, f64) -> bool + 'a>>,
     ssl_ctx: Option<Box<dyn FnMut(*mut c_void) -> Result<(), Error> + 'a>>,
@@ -149,6 +150,11 @@ impl Easy {
     /// Same as [`Easy2::progress`](struct.Easy2.html#method.progress)
     pub fn progress(&mut self, progress: bool) -> Result<(), Error> {
         self.inner.progress(progress)
+    }
+
+    /// Same as [`Easy2::prereq`](struct.Easy2.html#method.prereq).
+    pub fn prereq(&mut self, enable: bool) -> Result<(), Error> {
+        self.inner.prereq(enable)
     }
 
     /// Same as [`Easy2::signal`](struct.Easy2.html#method.signal)
@@ -398,6 +404,29 @@ impl Easy {
         F: FnMut(f64, f64, f64, f64) -> bool + Send + 'static,
     {
         self.inner.get_mut().owned.progress = Some(Box::new(f));
+        Ok(())
+    }
+
+    /// Called after connection setup and before sending a request.
+    ///
+    /// The arguments are the remote and local IP addresses and their
+    /// respective ports. Return `true` to continue or `false` to abort with
+    /// `is_aborted_by_callback`. This runs for new and reused connections,
+    /// including after TLS setup, and may run again for followed redirects.
+    ///
+    /// Setting this callback enables [`Easy::prereq`] without requiring
+    /// verbose output. [`Easy::reset`] disables it while retaining the closure;
+    /// [`Easy::prereq`] can enable it again. Use [`Transfer::prereq_function`]
+    /// to borrow stack-local data instead.
+    ///
+    /// This corresponds to `CURLOPT_PREREQFUNCTION` and `CURLOPT_PREREQDATA`,
+    /// available since libcurl 7.80.0.
+    pub fn prereq_function<F>(&mut self, f: F) -> Result<(), Error>
+    where
+        F: FnMut(&str, &str, u16, u16) -> bool + Send + 'static,
+    {
+        self.inner.prereq(true)?;
+        self.inner.get_mut().owned.prereq = Some(Box::new(f));
         Ok(())
     }
 
@@ -1623,6 +1652,21 @@ impl Handler for EasyData {
         }
     }
 
+    fn prereq(
+        &mut self,
+        primary_ip: &str,
+        local_ip: &str,
+        primary_port: u16,
+        local_port: u16,
+    ) -> bool {
+        unsafe {
+            match self.callback(|s| &mut s.prereq) {
+                Some(prereq) => prereq(primary_ip, local_ip, primary_port, local_port),
+                None => true,
+            }
+        }
+    }
+
     fn ssl_ctx(&mut self, cx: *mut c_void) -> Result<(), Error> {
         unsafe {
             match self.callback(|s| &mut s.ssl_ctx) {
@@ -1677,6 +1721,17 @@ impl<'easy, 'data> Transfer<'easy, 'data> {
         F: FnMut(f64, f64, f64, f64) -> bool + 'data,
     {
         self.data.progress = Some(Box::new(f));
+        Ok(())
+    }
+
+    /// Same as `Easy::prereq_function`, just takes a non `'static` lifetime
+    /// corresponding to the lifetime of this transfer.
+    pub fn prereq_function<F>(&mut self, f: F) -> Result<(), Error>
+    where
+        F: FnMut(&str, &str, u16, u16) -> bool + 'data,
+    {
+        self.easy.inner.prereq(true)?;
+        self.data.prereq = Some(Box::new(f));
         Ok(())
     }
 
