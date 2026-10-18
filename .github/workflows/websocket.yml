@@ -2,9 +2,9 @@ name: WebSocket
 
 on:
   push:
-    branches: [main, moli, moli-apple-sectrust]
+    branches: [main, moli, moli-apple-sectrust, feat/prerequest-callback]
   pull_request:
-    branches: [main, moli, moli-apple-sectrust]
+    branches: [main, moli, moli-apple-sectrust, feat/prerequest-callback]
 
 permissions:
   contents: read
@@ -24,6 +24,6 @@ jobs:
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Test HTTP and WebSocket APIs
-        run: cargo test --workspace --features static-curl,http2,brotli,websocket,ws_start_frame_8_16_0
+        run: cargo test --workspace --features static-curl,http2,brotli,apple-sectrust,websocket,ws_start_frame_8_16_0
       - name: Check native ABI
-        run: cargo run -p systest --features curl-sys/static-curl,systest/websocket,systest/ws_start_frame_8_16_0
+        run: cargo run -p systest --features curl-sys/static-curl,curl-sys/apple-sectrust,systest/websocket,systest/ws_start_frame_8_16_0

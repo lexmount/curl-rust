@@ -71,14 +71,20 @@ can pause reading. System library builds do not get these fixes.
 Bundled builds also preserve application-owned `CONNECT_ONLY` sockets when
 the per-host connection limit is reached, matching the total-limit eviction
 policy. A quiet upgraded WebSocket still consumes a connection slot; a new
-transfer waits for capacity instead of evicting it. This fix is generated in
-`OUT_DIR/conncache.c`, with the same submodule and patch-location checks.
+transfer waits for capacity instead of evicting it. Bundled libcurl 8.23.0
+includes the [upstream fix](https://github.com/curl/curl/commit/9e6673fb7d55b40d18383f49f465f1bd1cfce1ee),
+so this fork compiles `conncache.c` directly without a generated patch.
+
+For bundled OpenSSL builds on Apple platforms, enable the upstream
+`apple-sectrust` feature to use the system trust store. Explicit `SSL_CERT_FILE`
+and `SSL_CERT_DIR` overrides remain supported; no certificate file is selected
+automatically when SecTrust is available.
 
 Local validation (including C structure and function ABI checks):
 
 ```sh
-cargo test --workspace --features static-curl,http2,brotli,websocket,ws_start_frame_8_16_0
-cargo run -p systest --features curl-sys/static-curl,systest/websocket,systest/ws_start_frame_8_16_0
+cargo test --workspace --features static-curl,http2,brotli,apple-sectrust,websocket,ws_start_frame_8_16_0
+cargo run -p systest --features curl-sys/static-curl,curl-sys/apple-sectrust,systest/websocket,systest/ws_start_frame_8_16_0
 ```
 
 ## Quick Start

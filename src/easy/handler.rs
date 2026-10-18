@@ -737,7 +737,20 @@ impl<H: Handler> Easy2<H> {
         }
     }
 
-    #[cfg(not(need_openssl_probe))]
+    #[cfg(apple_sectrust)]
+    fn ssl_configure(&mut self) {
+        // Let SecTrust supply the native roots unless the caller explicitly
+        // selects certificate paths. Preserve invalid overrides as well;
+        // silently ignoring them would choose a different trust source.
+        if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+            let _ = self.cainfo(Path::new(&path));
+        }
+        if let Some(path) = std::env::var_os("SSL_CERT_DIR") {
+            let _ = self.capath(Path::new(&path));
+        }
+    }
+
+    #[cfg(not(any(need_openssl_probe, apple_sectrust)))]
     fn ssl_configure(&mut self) {}
 }
 

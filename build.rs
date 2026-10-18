@@ -5,6 +5,7 @@ fn main() {
         "cargo:rustc-check-cfg=cfg(\
             need_openssl_init,\
             need_openssl_probe,\
+            apple_sectrust,\
         )"
     );
     // OpenSSL >= 1.1.0 can be initialized concurrently and is initialized correctly by libcurl.
@@ -28,7 +29,9 @@ fn main() {
 
         // The system libcurl should have the default certificate paths configured.
         // Apple SecTrust likewise supplies the native trust anchors itself.
-        if env::var_os("DEP_CURL_STATIC").is_some() && !apple_sectrust {
+        if apple_sectrust {
+            println!("cargo:rustc-cfg=apple_sectrust");
+        } else if env::var_os("DEP_CURL_STATIC").is_some() {
             println!("cargo:rustc-cfg=need_openssl_probe");
         }
     }
