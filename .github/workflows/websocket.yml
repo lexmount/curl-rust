@@ -2,9 +2,9 @@ name: WebSocket
 
 on:
   push:
-    branches: [main, moli]
+    branches: [main, moli, moli-apple-sectrust]
   pull_request:
-    branches: [main, moli]
+    branches: [main, moli, moli-apple-sectrust]
 
 permissions:
   contents: read

@@ -153,6 +153,30 @@ pub trait Handler {
         debug(kind, data)
     }
 
+    /// Called after connection setup and before sending a request.
+    ///
+    /// This runs for both new and reused connections, after any TLS handshake.
+    /// Followed redirects can invoke it more than once per transfer. The
+    /// arguments are the remote and local IP addresses (without IPv6 brackets)
+    /// and their respective ports. The address strings borrow libcurl's data.
+    ///
+    /// Return `true` to continue or `false` to abort with
+    /// [`Error::is_aborted_by_callback`](crate::Error::is_aborted_by_callback).
+    /// Enable this callback with [`Easy2::prereq`]; verbose is not required.
+    ///
+    /// This corresponds to `CURLOPT_PREREQFUNCTION` and `CURLOPT_PREREQDATA`,
+    /// available since libcurl 7.80.0.
+    fn prereq(
+        &mut self,
+        primary_ip: &str,
+        local_ip: &str,
+        primary_port: u16,
+        local_port: u16,
+    ) -> bool {
+        let _ = (primary_ip, local_ip, primary_port, local_port);
+        true
+    }
+
     /// Callback that receives header data
     ///
     /// This function gets called by libcurl as soon as it has received header
@@ -618,6 +642,23 @@ impl<H: Handler> Easy2<H> {
             curl_sys::curl_easy_reset(self.inner.handle);
         }
         self.default_configure();
+    }
+
+    /// Enables or disables the [`Handler::prereq`] callback.
+    ///
+    /// The callback is disabled by default and by [`Easy2::reset`]. Enabling
+    /// it does not require verbose output or allocate callback storage.
+    ///
+    /// This corresponds to `CURLOPT_PREREQFUNCTION` and `CURLOPT_PREREQDATA`,
+    /// available since libcurl 7.80.0. Older versions return an option error.
+    pub fn prereq(&mut self, enable: bool) -> Result<(), Error> {
+        if !enable {
+            return self.setopt_ptr(curl_sys::CURLOPT_PREREQFUNCTION, ptr::null());
+        }
+        let cb: curl_sys::curl_prereq_callback = prereq_cb::<H>;
+        let data = &*self.inner as *const _ as *const _;
+        self.setopt_ptr(curl_sys::CURLOPT_PREREQDATA, data)?;
+        self.setopt_ptr(curl_sys::CURLOPT_PREREQFUNCTION, cb as *const _)
     }
 
     fn default_configure(&mut self) {
@@ -3793,6 +3834,33 @@ extern "C" fn progress_cb<H: Handler>(
         0
     } else {
         1
+    }
+}
+
+extern "C" fn prereq_cb<H: Handler>(
+    data: *mut c_void,
+    primary_ip: *mut c_char,
+    local_ip: *mut c_char,
+    primary_port: c_int,
+    local_port: c_int,
+) -> c_int {
+    let keep_going = panic::catch(|| unsafe {
+        // libcurl supplies NUL-terminated numeric IP addresses and socket
+        // ports. As with the other callbacks, data points into Easy2's boxed
+        // Inner, which remains alive and stationary until curl_easy_cleanup.
+        let primary_ip = CStr::from_ptr(primary_ip).to_str().unwrap();
+        let local_ip = CStr::from_ptr(local_ip).to_str().unwrap();
+        let primary_port = u16::try_from(primary_port).unwrap();
+        let local_port = u16::try_from(local_port).unwrap();
+        (*(data as *mut Inner<H>))
+            .handler
+            .prereq(primary_ip, local_ip, primary_port, local_port)
+    })
+    .unwrap_or(false);
+    if keep_going {
+        curl_sys::CURL_PREREQFUNC_OK
+    } else {
+        curl_sys::CURL_PREREQFUNC_ABORT
     }
 }
 

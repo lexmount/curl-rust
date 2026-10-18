@@ -54,7 +54,7 @@ fn main() {
         s => s.to_string(),
     });
     // cfg.fn_cname(|s, l| l.unwrap_or(s).to_string());
-    cfg.skip_type(|n| n == "__enum_ty");
+    cfg.skip_type(move |n| n == "__enum_ty" || (version < (7, 80) && n == "curl_prereq_callback"));
     cfg.skip_signededness(|s| s.ends_with("callback") || s.ends_with("function"));
 
     cfg.skip_struct(move |s| {
@@ -79,6 +79,17 @@ fn main() {
 
     // Version symbols are extracted from https://curl.se/libcurl/c/symbols-in-versions.html
     cfg.skip_const(move |s| {
+        if version < (7, 80)
+            && matches!(
+                s,
+                "CURLOPT_PREREQFUNCTION"
+                    | "CURLOPT_PREREQDATA"
+                    | "CURL_PREREQFUNC_OK"
+                    | "CURL_PREREQFUNC_ABORT"
+            )
+        {
+            return true;
+        }
         if version < (7, 86) && (s.starts_with("CURLWS_") || s == "CURLOPT_WS_OPTIONS") {
             return true;
         }
