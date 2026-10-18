@@ -74,9 +74,11 @@ fn run(stream: impl Read + Write, rx: &Receiver<Message>) {
                         actual, expected_headers
                     );
                 }
-                for header in expected_headers {
-                    panic!("expected header but not found: {:?}", header);
-                }
+                assert!(
+                    expected_headers.is_empty(),
+                    "expected headers but not found: {:?}",
+                    expected_headers
+                );
 
                 let mut line = String::new();
                 let mut socket = match expected_len {
