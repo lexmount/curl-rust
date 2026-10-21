@@ -128,3 +128,82 @@ fn ignored_cr_segments_still_count_towards_the_header_limit() {
     let (result, _, _) = fetch(vec![response]);
     assert!(result.is_err());
 }
+
+#[test]
+fn unterminated_bare_cr_headers_finish_at_plain_http_eof() {
+    for prefix in ["", "HTTP/1.1 100 Continue\r\n\r\n"] {
+        for byte in [b'X', b':', b'\t', b'\r', 0xff] {
+            let mut response =
+                format!("{prefix}HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r")
+                    .into_bytes();
+            response.extend_from_slice(&[byte, b'\n']);
+            response.extend_from_slice(b"abc");
+            let (result, headers, body) = fetch(vec![response]);
+            result
+                .unwrap_or_else(|error| panic!("prefix={:?}, byte={:#x}: {}", prefix, byte, error));
+            assert!(headers.contains(&b"Content-Length: 3\r\n".to_vec()));
+            assert_eq!(
+                headers
+                    .iter()
+                    .filter(|line| line.as_slice() == b"\r\n")
+                    .count(),
+                usize::from(!prefix.is_empty()),
+                "EOF does not manufacture a header/body separator"
+            );
+            assert!(body.is_empty(), "unterminated headers are not body bytes");
+        }
+    }
+}
+
+#[test]
+fn plain_http_header_eof_flushes_pending_fields_without_decoding_a_body() {
+    for fields in [
+        "Content-Length: 3\r\nX-Last: yes",
+        "Content-Length: 12\r\nContent-Encoding: gzip\r\n",
+        "Transfer-Encoding: chunked\r\n",
+    ] {
+        let response = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n{fields}");
+        let (result, headers, body) = fetch(vec![response.into_bytes()]);
+        result.unwrap_or_else(|error| panic!("{:?}: {}", fields, error));
+        assert!(!headers.contains(&b"\r\n".to_vec()));
+        assert!(body.is_empty());
+        if fields.contains("X-Last") {
+            assert!(headers.contains(&b"X-Last: yes\r\n".to_vec()));
+        }
+    }
+}
+
+#[test]
+fn header_eof_keeps_nul_and_real_body_truncation_errors() {
+    for response in [
+        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Test: one\0two",
+        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabc",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nab",
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 4",
+        "HTTP/1.1 100 Continue\r\n\r\n",
+    ] {
+        let (result, _, _) = fetch(vec![response.as_bytes().to_vec()]);
+        assert!(result.is_err(), "{:?}", response);
+    }
+}
+
+#[test]
+fn leading_cr_status_slop_is_bounded_and_survives_informational_responses() {
+    for prefix in ["", "HTTP/1.1 100 Continue\r\n\r\n"] {
+        for count in 1..=5 {
+            let response = format!(
+                "{prefix}{}HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+                "\r".repeat(count)
+            );
+            let (result, _, body) = fetch(vec![response.into_bytes()]);
+            if count <= 4 {
+                result.unwrap_or_else(|error| {
+                    panic!("prefix={:?}, count={}: {}", prefix, count, error)
+                });
+                assert_eq!(body, b"abc");
+            } else {
+                assert!(result.is_err(), "more than four bytes of status slop");
+            }
+        }
+    }
+}
