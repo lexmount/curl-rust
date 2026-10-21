@@ -224,7 +224,7 @@ fn main() {
         .file("curl/lib/headers.c")
         .file("curl/lib/hmac.c")
         .file("curl/lib/hsts.c")
-        .file("curl/lib/http.c")
+        .file(http_source(&dst))
         .file("curl/lib/http1.c")
         .file("curl/lib/http_aws_sigv4.c")
         .file("curl/lib/http_chunks.c")
@@ -664,6 +664,44 @@ fn websocket_source(dst: &Path) -> PathBuf {
     );
     let patched = dst.join("ws.c");
     fs::write(&patched, contents.replacen(before, after, 1)).unwrap();
+    patched
+}
+
+fn http_source(dst: &Path) -> PathBuf {
+    let source = PathBuf::from("curl/lib/http.c");
+    if !cfg!(feature = "browser-response-headers") {
+        return source;
+    }
+
+    // Keep the upstream submodule untouched, as for websocket_source. Only
+    // HTTP/1 response parsing uses the browser's CR-delimited field segments;
+    // HTTP/2 and HTTP/3 still use libcurl's strict header validation.
+    println!("cargo:rerun-if-changed=http_browser_headers.c");
+    let mut contents = fs::read_to_string(source).unwrap().replace("\r\n", "\n");
+    let anchor = "static CURLcode http_parse_headers(struct Curl_easy *data,";
+    assert_eq!(contents.matches(anchor).count(), 1);
+    contents = contents.replacen(
+        anchor,
+        &format!("{}\n{anchor}", include_str!("http_browser_headers.c")),
+        1,
+    );
+    for before in [
+        "result = http_rw_hd(data, curlx_dyn_ptr(&data->state.headerb),",
+        "result = http_rw_hd(data, hd, hlen, buf, blen, &consumed);",
+    ] {
+        assert_eq!(
+            contents.matches(before).count(),
+            1,
+            "recheck browser HTTP/1 response parsing against bundled libcurl"
+        );
+        contents = contents.replacen(
+            before,
+            &before.replace("http_rw_hd(", "http_rw_hd_browser("),
+            1,
+        );
+    }
+    let patched = dst.join("http.c");
+    fs::write(&patched, contents).unwrap();
     patched
 }
 
