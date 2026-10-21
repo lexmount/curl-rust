@@ -23,10 +23,10 @@ static CURLcode http_write_browser_segment(struct Curl_easy *data,
   return result;
 }
 
-static CURLcode http_rw_hd_browser(struct Curl_easy *data,
-                                   const char *hd, size_t hdlen,
-                                   const char *buf_remain, size_t blen,
-                                   size_t *pconsumed)
+static CURLcode http_rw_hd_browser_impl(struct Curl_easy *data,
+                                        const char *hd, size_t hdlen,
+                                        const char *buf_remain, size_t blen,
+                                        size_t *pconsumed, bool at_eof)
 {
   struct dynbuf line;
   CURLcode result = CURLE_OK;
@@ -41,7 +41,7 @@ static CURLcode http_rw_hd_browser(struct Curl_easy *data,
   if(len && hd[len - 1] == '\r')
     len--;
   if(!(data->conn->scheme->protocol & PROTO_FAMILY_HTTP) ||
-     !memchr(hd, '\r', len))
+     (!at_eof && !memchr(hd, '\r', len)))
     return http_rw_hd(data, hd, hdlen, buf_remain, blen, pconsumed);
 
   *pconsumed = 0;
@@ -88,5 +88,53 @@ static CURLcode http_rw_hd_browser(struct Curl_easy *data,
   /* Do not let discarded segments bypass libcurl's aggregate header limit. */
   if(!result && hdlen > emitted)
     result = Curl_bump_headersize(data, hdlen - emitted, FALSE);
+  return result;
+}
+
+static CURLcode http_rw_hd_browser(struct Curl_easy *data,
+                                   const char *hd, size_t hdlen,
+                                   const char *buf_remain, size_t blen,
+                                   size_t *pconsumed)
+{
+  return http_rw_hd_browser_impl(data, hd, hdlen, buf_remain, blen,
+                                 pconsumed, FALSE);
+}
+
+/* Chromium accepts a truncated HTTP header block at connection-close, with
+ * no body. This does not apply to HTTPS, nor to a body whose headers already
+ * ended. In particular, normal Content-Length/chunked truncation stays fatal.
+ */
+static CURLcode http_finish_browser_headers(struct Curl_easy *data)
+{
+  struct SingleRequest *k = &data->req;
+  CURLcode result;
+  size_t ignored;
+
+  if(data->conn->scheme->protocol != CURLPROTO_HTTP) {
+    failf(data, "Truncated response headers");
+    return CURLE_WEIRD_SERVER_REPLY;
+  }
+
+  if(curlx_dyn_len(&data->state.headerb)) {
+    result = http_rw_hd_browser_impl(data,
+                                     curlx_dyn_ptr(&data->state.headerb),
+                                     curlx_dyn_len(&data->state.headerb),
+                                     NULL, 0, &ignored, TRUE);
+    curlx_dyn_reset(&data->state.headerb);
+    if(result)
+      return result;
+  }
+  data->state.maybe_folded = FALSE;
+  data->state.leading_unfold = FALSE;
+
+  /* Finish transport framing without inventing a header callback separator.
+   * Callers still finalize EOF responses after successful transfer completion,
+   * where cancellation and response publication have their usual ordering.
+   */
+  result = http_on_response(data, NULL, 0, NULL, 0, &ignored);
+  if(!result) {
+    k->no_body = TRUE;
+    k->download_done = TRUE;
+  }
   return result;
 }

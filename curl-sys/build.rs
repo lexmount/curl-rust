@@ -700,6 +700,39 @@ fn http_source(dst: &Path) -> PathBuf {
             1,
         );
     }
+    let before = "  return checkhttpprefix(data, s, len);\n}";
+    assert_eq!(contents.matches(before).count(), 1);
+    contents = contents.replacen(
+        before,
+        r#"  if(conn->scheme->protocol & PROTO_FAMILY_HTTP) {
+    size_t slop = 0;
+    /* Chromium locates the status line within four leading bytes. */
+    while(len && *s == '\r' && slop < 4) {
+      s++;
+      len--;
+      slop++;
+    }
+  }
+  return checkhttpprefix(data, s, len);
+}"#,
+        1,
+    );
+    let before = "  result = Curl_http_write_resp_hds(data, buf, blen, &consumed);\n";
+    assert_eq!(contents.matches(before).count(), 1);
+    contents = contents.replacen(
+        before,
+        &format!(
+            "{before}{}",
+            r#"  if(!result && is_eos && data->req.header &&
+     (data->conn->scheme->protocol & PROTO_FAMILY_HTTP) &&
+     data->req.httpversion < 20 && data->req.httpcode >= 200) {
+    result = http_finish_browser_headers(data);
+    goto out;
+  }
+"#
+        ),
+        1,
+    );
     let patched = dst.join("http.c");
     fs::write(&patched, contents).unwrap();
     patched
